@@ -1,0 +1,44 @@
+---
+title: "R Notebook"
+---
+
+```{r Library import}
+library(smoof)
+library(flacco)
+library(lhs)
+library(tidyverse)
+```
+
+```{r Feature Calculation}
+#listAvailableFeatureSets()
+feature_sets <- c("ela_meta")
+#feature_sets <- c("ela_curv","ela_conv","ela_distr","ela_level","ela_local","ela_meta","basic","cm_angle","disp","ic","nbc","pca") #TODO: Passt?
+dimensions = c(2L,3L,5L,10L)
+fids = 1:24
+iids = 1:5
+
+#Set domain of the sampled functions
+control <- list("init_sample.lower" = -5, "init_sample.upper" = 5, "init_sample.type" = "lhs")
+
+for (dim in dimensions) {
+  X <- createInitialSample(n.obs = 50 * dim, dim = dim, control = control) #TODO: Für jede Dimension neu samplen? 
+  for (fid in fids) {
+    for (feature_set in feature_sets){
+      all_features <- tibble()
+      for (iid in iids) {
+        fn <- makeBBOBFunction(dimensions = dim, fid = fid, iid = iid)
+        
+        y <- apply(X, 1, fn)
+        
+        feat.object <- createFeatureObject(X = X, y = y)
+        
+        featureSet <- calculateFeatureSet(feat.object, set = feature_set)
+        
+        all_features <- bind_rows(all_features, as_tibble(featureSet))
+      }
+      return()
+      #Median über alle iids
+    }
+  }
+}
+```
