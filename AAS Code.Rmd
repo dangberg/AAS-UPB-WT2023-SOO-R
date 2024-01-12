@@ -57,15 +57,12 @@ stopCluster(cl)
 ```{r Export}
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 write.csv(features,"features.csv")
-```
-
-```{r}
 names(which(colSums(is.na(features))>0)) #TODO: Sollen wir die Löschen? Prager löscht die
 ```
 
-```{r Scaling}
+```{r Feature Scaling}
 normalize = function(x){
-  return ((x-min(x))/(max(x)-min(x)))
+  return ((x-min(x))/(max(x)-min(x))) #TODO: Global oder pro Dimension
 }
 
 normalized_features = features %>% mutate_at(c("ic.eps.s","ic.eps.max","ic.eps.ratio","ela_meta.lin_simple.intercept","ela_meta.lin_simple.coef.min","ela_meta.lin_simple.coef.max","pca.expl_var.cov_init","pca.expl_var_PC1.cov_init"), normalize)
