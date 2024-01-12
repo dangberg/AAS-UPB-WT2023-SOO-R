@@ -7,38 +7,70 @@ library(smoof)
 library(flacco)
 library(lhs)
 library(tidyverse)
+library(foreach)
+library(doParallel)
 ```
 
 ```{r Feature Calculation}
+cores = detectCores()
+cl = makeCluster(cores[1]-1)
+registerDoParallel(cl)
+
 #listAvailableFeatureSets()
-feature_sets <- c("ela_meta")
-#feature_sets <- c("ela_curv","ela_conv","ela_distr","ela_level","ela_local","ela_meta","basic","cm_angle","disp","ic","nbc","pca") #TODO: Passt?
+feature_sets <- c("ela_curv","ela_conv","ela_distr","ela_level","ela_local","ela_meta","basic","cm_angle","disp","ic","nbc","pca") #TODO: Passt?
 dimensions = c(2L,3L,5L,10L)
 fids = 1:24
 iids = 1:5
 
-#Set domain of the sampled functions
-control <- list("init_sample.lower" = -5, "init_sample.upper" = 5, "init_sample.type" = "lhs")
 
+features= tibble()
+#Set domain of the sampled functions
+control = list("init_sample.lower" = -5, "init_sample.upper" = 5, "init_sample.type" = "lhs")
 for (dim in dimensions) {
-  X <- createInitialSample(n.obs = 50 * dim, dim = dim, control = control) #TODO: Für jede Dimension neu samplen? 
-  for (fid in fids) {
+  X <- createInitialSample(n.obs = 50 * dim, dim = dim, control = control) #TODO: Für jede Dimension neu samplen?
+  
+  results_df = foreach(fid=fids, .combine = bind_rows, .packages = c("tidyverse","flacco","smoof")) %dopar% {
+    meansOfAllFeatures = c()
     for (feature_set in feature_sets){
-      all_features <- tibble()
+      all_features = tibble()
       for (iid in iids) {
-        fn <- makeBBOBFunction(dimensions = dim, fid = fid, iid = iid)
-        
-        y <- apply(X, 1, fn)
-        
-        feat.object <- createFeatureObject(X = X, y = y)
-        
-        featureSet <- calculateFeatureSet(feat.object, set = feature_set)
-        
-        all_features <- bind_rows(all_features, as_tibble(featureSet))
+        fn = makeBBOBFunction(dimensions = dim, fid = fid, iid = iid)
+        feat.object = createFeatureObject(X = X, fun = fn)
+        featureSet = calculateFeatureSet(feat.object, set = feature_set)
+        all_features = bind_rows(all_features, as_tibble(featureSet))
       }
-      return()
       #Median über alle iids
+      means = apply(all_features, 2, mean)
+      meansOfAllFeatures = c(meansOfAllFeatures, means) #TODO: 151 statt 102
     }
+    # Erstelle eine Zeile für das aktuelle Sample
+    sample_row = c(dim = dim, fid = fid, meansOfAllFeatures)
+    # Füge die Zeile zum DataFrame hinzu
+    data.frame(as.list(sample_row))
   }
+  features = bind_rows(features,results_df)
+  print("Finished dim")
 }
+stopCluster(cl)
 ```
+
+```{r Export}
+write.csv(features,"/Users/daniel/Desktop/AAS-UPB-WT2023-SOO-R/features.csv")
+```
+
+```{r}
+names(which(colSums(is.na(features))>0)) #TODO: Sollen wir die Löschen? Prager löscht die
+```
+
+```{r Scaling}
+normalize = function(x){
+  return ((x-min(x))/(max(x)-min(x)))
+}
+
+normalized_features = features %>% mutate_at(c("ic.eps.s","ic.eps.max","ic.eps.ratio","ela_meta.lin_simple.intercept","ela_meta.lin_simple.coef.min","ela_meta.lin_simple.coef.max","pca.expl_var.cov_init","pca.expl_var_PC1.cov_init"), normalize)
+
+#TODO: 20 sample in Prager23?
+```
+
+
+
