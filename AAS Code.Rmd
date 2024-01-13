@@ -3,10 +3,18 @@ title: "R Notebook"
 ---
 
 ```{r Library import}
+# Feature calculation (+ implicit dependencies)
 library(smoof)
 library(flacco)
 library(lhs)
+library(numDeriv)
+library(e1071)
+library(mda)
+library(plyr)
+library(RANN)
+# Visualization
 library(tidyverse)
+# Parallel execution
 library(foreach)
 library(doParallel)
 ```
@@ -49,7 +57,7 @@ for (dim in dimensions) {
     data.frame(as.list(sample_row))
   }
   features = bind_rows(features,results_df)
-  print("Finished dim")
+  print(paste0("Finished dim ", dim))
 }
 stopCluster(cl)
 ```
@@ -68,6 +76,7 @@ normalize = function(x){
 normalized_features = features %>% mutate_at(c("ic.eps.s","ic.eps.max","ic.eps.ratio","ela_meta.lin_simple.intercept","ela_meta.lin_simple.coef.min","ela_meta.lin_simple.coef.max","pca.expl_var.cov_init","pca.expl_var_PC1.cov_init"), normalize)
 
 #TODO: 20 sample in Prager23?
+#TODO: Save scaled features
 ```
 
 ```{r relERT calculation}
