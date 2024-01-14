@@ -20,8 +20,10 @@ library(doParallel)
 # Model training
 library(mlr)
 library(rpart)
+library(kernlab)
 library(randomForest)
 library(xgboost)
+library(earth)
 ```
 
 ```{r Feature Calculation}
@@ -124,8 +126,8 @@ data = merge(features,relERT,by=c("dim","fid"))
 
 
 ```{r regression model training}
-learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost")
-reg_models = list()
+learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
+regr_models = list()
 for(learner in learners)
 {
   regr.lrn = makeLearner(learner)
@@ -134,7 +136,7 @@ for(learner in learners)
     data_temp = data %>% select(all_of(feature_names), solver)
     regr.task = makeRegrTask(id = name, data = data_temp, target = solver)
     model = train(regr.lrn, regr.task)
-    reg_models[[name]] = model
+    regr_models[[name]] = model
   }
 }
 ```
@@ -142,15 +144,19 @@ for(learner in learners)
 ```{r classification model training}
 data_temp = data %>% select(all_of(feature_names), "Best")
 learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
-models = list()
+classif_models = list()
 for (learner in learners){
   classif.lrn = makeLearner(learner)
   classif.task = makeClassifTask(id = learner, data = data_temp, target = "Best")
   model = train(classif.lrn, classif.task)
-  models[[learner]] = model
+  classif_models[[learner]] = model
 }
 ```
 
+```{r paired regression model training}
+learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
+# TODO: implement
+```
 
 
 
