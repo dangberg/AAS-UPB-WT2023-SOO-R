@@ -42,7 +42,7 @@ features= tibble()
 #Set domain of the sampled functions
 control = list("init_sample.lower" = -5, "init_sample.upper" = 5, "init_sample.type" = "lhs")
 for (dim in dimensions) {
-  X <- createInitialSample(n.obs = 50 * dim, dim = dim, control = control) #TODO: Für jede Dimension neu samplen?
+  X <- createInitialSample(n.obs = 50 * dim, dim = dim, control = control) #TODO: Für jede DIM, FID oder IID neu samplen?
   
   results_df = foreach(fid=fids, .combine = bind_rows, .packages = c("tidyverse","flacco","smoof")) %dopar% {
     meansOfAllFeatures = c()
@@ -56,7 +56,7 @@ for (dim in dimensions) {
       }
       #Median über alle iids
       means = apply(all_features, 2, mean)
-      meansOfAllFeatures = c(meansOfAllFeatures, means) #TODO: 151 statt 102
+      meansOfAllFeatures = c(meansOfAllFeatures, means)
     }
     # Erstelle eine Zeile für das aktuelle Sample
     sample_row = c(dim = dim, fid = fid, meansOfAllFeatures)
@@ -110,7 +110,8 @@ relERT = relERT[-1]
 ```{r Preprocessing}
 features <- features[,colSums(is.na(features)) == 0] # TODO: Wie mit na umgehen?
 features <- features %>% select(-c("ela_level.lda_qda_25", "ela_level.lda_mda_25", "ela_level.qda_mda_25")) # TODO: Wie mit inf umgehen?
-features <- features[, sapply(features, function(v) var(v, na.rm=TRUE)!=0)] # Wie umgehen mit Konstanten?
+features <- features[, sapply(features, function(v) var(v, na.rm=TRUE)!=0)] # TODO: Wie umgehen mit Konstanten?
+# TODO: 105 Features (in Paper 102) -> welche noch zu viel?
 
 names(relERT)[names(relERT) == "CMA-CSA"] <- "CMA_CSA"
 names(relERT)[names(relERT) == "SMAC-BBOB"] <- "SMAC_BBOB"
@@ -158,6 +159,17 @@ learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "re
 # TODO: implement
 ```
 
+```{r Hyperparameter tuning}
+# TODO: Finish tuning & integrate in model training
+feature_matrix = as.matrix(data %>% select(all_of(feature_names)))
+sigest_values = unname(sigest(feature_matrix))
+discrete_ps = makeParamSet(makeDiscreteParam("sigma", values = sigest_values))
+rdesc = makeResampleDesc("CV", iters = 3L)
+ctrl = makeTuneControlGrid()
+classif.task = makeClassifTask(id = "classif.ksvm", data = data_temp, target = "Best")
+res = tuneParams("classif.ksvm", task = classif.task, resampling = rdesc,
+  par.set = discrete_ps, control = ctrl)
+```
 
 
 
