@@ -12,14 +12,14 @@ library(e1071)
 library(mda)
 library(plyr)
 library(RANN)
-# Visualization
+# Data processing
 library(tidyverse)
 # Parallel execution
 library(foreach)
 library(doParallel)
-
-library(tidymodels)
-library(ranger)
+# Model training
+library(mlr)
+library(randomForest)
 ```
 
 ```{r Feature Calculation}
@@ -103,8 +103,10 @@ relERT = read_csv("relERT.csv")
 features = features[-1]
 relERT = relERT[-1]
 ```
+
 ```{r Preprocessing}
-features <- features[,colSums(is.na(features)) == 0]
+features <- features[,colSums(is.na(features)) == 0] # Wie mit na umgehen?
+features <- features %>% select(-c("ela_level.lda_qda_25", "ela_level.lda_mda_25", "ela_level.qda_mda_25")) # Wie mit inf umgehen?
 names(relERT)[names(relERT) == "CMA-CSA"] <- "CMA_CSA"
 names(relERT)[names(relERT) == "SMAC-BBOB"] <- "SMAC_BBOB"
 feature_names = colnames(features[3:ncol(features)])
@@ -114,25 +116,27 @@ relERT$Best<-colnames(relERT[3:ncol(relERT)])[apply(relERT[3:ncol(relERT)],1,whi
 relERT$Best = as.factor(relERT$Best)
 
 data = merge(features,relERT,by=c("dim","fid"))
-feature_formula <- paste(feature_names, collapse = " + ")
 ```
 
 
 ```{r regression model training}
+regr.lrn = makeLearner("regr.randomForest", par.vals = list(ntree = 500))
+
 models = list()
 for (solver in solver_names){
-  formula <- as.formula(paste(solver , "~", feature_formula))
-  rf_mod <- rand_forest(trees = 500, mode = "regression", engine = "ranger")
-  model = rf_mod %>% fit(formula, data = data)
+  data_temp = data %>% select(all_of(feature_names), solver)
+  regr.task = makeRegrTask(id = paste("RF Regression", solver), data = data_temp, target = solver)
+  model = train(regr.lrn, regr.task)
   models[[solver]] = model
 }
 ```
 
 ```{r classification model training}
-# Was machen wir wenn mehrere relERT = 1 haben?
-formula <- as.formula(paste("Best ~", feature_formula))
-rf_mod <- rand_forest(trees = 500, mode = "classification", engine = "ranger")
-model = rf_mod %>% fit(formula, data = data)
+# Was machen, wenn wir mehrere relERT = 1 haben?
+classif.lrn = makeLearner("classif.randomForest", par.vals = list(ntree = 500))
+data_temp = data %>% select(all_of(feature_names), "Best")
+classif.task = makeClassifTask(id = "RF Classification", data = data_temp, target = "Best")
+model = train(classif.lrn, classif.task)
 model
 ```
 
