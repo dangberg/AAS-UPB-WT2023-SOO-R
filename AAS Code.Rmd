@@ -17,6 +17,9 @@ library(tidyverse)
 # Parallel execution
 library(foreach)
 library(doParallel)
+
+library(tidymodels)
+library(ranger)
 ```
 
 ```{r Feature Calculation}
@@ -62,12 +65,6 @@ for (dim in dimensions) {
 stopCluster(cl)
 ```
 
-```{r Export}
-setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
-write.csv(features,"features.csv")
-names(which(colSums(is.na(features))>0)) #TODO: Sollen wir die Löschen? Prager löscht die
-```
-
 ```{r Feature Scaling}
 normalize = function(x){
   return ((x-min(x))/(max(x)-min(x))) #TODO: Global oder pro Dimension
@@ -76,7 +73,12 @@ normalize = function(x){
 normalized_features = features %>% mutate_at(c("ic.eps.s","ic.eps.max","ic.eps.ratio","ela_meta.lin_simple.intercept","ela_meta.lin_simple.coef.min","ela_meta.lin_simple.coef.max","pca.expl_var.cov_init","pca.expl_var_PC1.cov_init"), normalize)
 
 #TODO: 20 sample in Prager23?
-#TODO: Save scaled features
+```
+
+```{r Export}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+write.csv(normalized_features,"features.csv")
+names(which(colSums(is.na(normalized_features))>0)) #TODO: Sollen wir die Löschen? Prager löscht die
 ```
 
 ```{r relERT calculation}
@@ -94,5 +96,31 @@ relERT = cbind(ert_data[1:2], df_normalized)
 write.csv(relERT,"relERT.csv")
 ```
 
+```{r Read data}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+features = read_csv("features.csv")
+relERT = read_csv("relERT.csv")
+features = features[-1]
+relERT = relERT[-1]
+```
+```{r Preprocessing}
+features <- features[,colSums(is.na(features)) == 0]
+names(relERT)[names(relERT) == "CMA-CSA"] <- "CMA_CSA"
+names(relERT)[names(relERT) == "SMAC-BBOB"] <- "SMAC_BBOB"
+data = merge(features,relERT,by=c("dim","fid"))
+feature_names = colnames(features[3:ncol(features)])
+solver_names = colnames(relERT[3:ncol(relERT)])
+feature_formula <- paste(feature_names, collapse = " + ")
+```
 
+
+```{r regression model training}
+models = list()
+for (solver in solver_names){
+  formula <- as.formula(paste(solver , "~", feature_formula))
+  rf_mod <- rand_forest(trees = 500, mode = "regression", engine = "ranger")
+  model = rf_mod %>% fit(formula, data = data)
+  models[[solver]] = model
+}
+```
 
