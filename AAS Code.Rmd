@@ -107,9 +107,13 @@ relERT = relERT[-1]
 features <- features[,colSums(is.na(features)) == 0]
 names(relERT)[names(relERT) == "CMA-CSA"] <- "CMA_CSA"
 names(relERT)[names(relERT) == "SMAC-BBOB"] <- "SMAC_BBOB"
-data = merge(features,relERT,by=c("dim","fid"))
 feature_names = colnames(features[3:ncol(features)])
 solver_names = colnames(relERT[3:ncol(relERT)])
+
+relERT$Best<-colnames(relERT[3:ncol(relERT)])[apply(relERT[3:ncol(relERT)],1,which.min)]
+relERT$Best = as.factor(relERT$Best)
+
+data = merge(features,relERT,by=c("dim","fid"))
 feature_formula <- paste(feature_names, collapse = " + ")
 ```
 
@@ -123,4 +127,16 @@ for (solver in solver_names){
   models[[solver]] = model
 }
 ```
+
+```{r classification model training}
+# Was machen wir wenn mehrere relERT = 1 haben?
+formula <- as.formula(paste("Best ~", feature_formula))
+rf_mod <- rand_forest(trees = 500, mode = "classification", engine = "ranger")
+model = rf_mod %>% fit(formula, data = data)
+model
+```
+
+
+
+
 
