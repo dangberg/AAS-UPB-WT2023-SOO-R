@@ -70,9 +70,6 @@ for (dim in dimensions) {
 stopCluster(cl)
 ```
 
-      means = apply(all_features, 2, mean)
-      meansOfAllFeatures = c(meansOfAllFeatures, means)
-
 ```{r Feature Scaling}
 normalize = function(x){
   return ((x-min(x))/(max(x)-min(x)))
@@ -151,7 +148,6 @@ relERT$Best = as.factor(relERT$Best)
 
 data = merge(features,relERT,by=c("dim","fid"))
 ```
-
 
 ```{r regression model training}
 learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
