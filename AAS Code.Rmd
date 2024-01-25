@@ -24,15 +24,20 @@ library(kernlab)
 library(randomForest)
 library(xgboost)
 library(earth)
+
+#traceback() for debugging 
+
+#code Strg + Click on function for source code
 ```
 
 ```{r Feature Calculation}
+set.seed(42)
+
 cores = detectCores()
 cl = makeCluster(cores[1]-1)
 registerDoParallel(cl)
 
-#listAvailableFeatureSets()
-feature_sets <- c("ela_curv","ela_conv","ela_distr","ela_level","ela_local","ela_meta","basic","cm_angle","disp","ic","nbc","pca") #TODO: Passt?
+feature_sets <- c("ela_curv","ela_conv","ela_distr","ela_level","ela_local","ela_meta","basic","cm_angle","disp","ic","nbc","pca")
 dimensions = c(2L,3L,5L,10L)
 fids = 1:24
 iids = 1:5
@@ -42,41 +47,55 @@ features= tibble()
 #Set domain of the sampled functions
 control = list("init_sample.lower" = -5, "init_sample.upper" = 5, "init_sample.type" = "lhs")
 for (dim in dimensions) {
-  X <- createInitialSample(n.obs = 50 * dim, dim = dim, control = control) #TODO: Für jede DIM, FID oder IID neu samplen?
+  X <- createInitialSample(n.obs = 50 * dim, dim = dim, control = control)
   
-  results_df = foreach(fid=fids, .combine = bind_rows, .packages = c("tidyverse","flacco","smoof")) %dopar% {
-    meansOfAllFeatures = c()
-    for (feature_set in feature_sets){
-      all_features = tibble()
+    results_df = foreach(fid=fids, .combine = bind_rows, .packages = c("tidyverse","flacco","smoof")) %dopar% {
+      blub = tibble()
       for (iid in iids) {
-        fn = makeBBOBFunction(dimensions = dim, fid = fid, iid = iid)
-        feat.object = createFeatureObject(X = X, fun = fn)
-        featureSet = calculateFeatureSet(feat.object, set = feature_set)
-        all_features = bind_rows(all_features, as_tibble(featureSet))
+          all_features = c()
+          for (feature_set in feature_sets){
+            fn = makeBBOBFunction(dimensions = dim, fid = fid, iid = iid)
+            feat.object = createFeatureObject(X = X, fun = fn)
+            featureSet = calculateFeatureSet(feat.object, set = feature_set)
+            all_features = c(all_features, as_tibble(featureSet))
+          }
+          sample_row = c(dim = dim, fid = fid, iid = iid, all_features)
+          blub = bind_rows(blub,sample_row)
       }
-      #Median über alle iids
-      means = apply(all_features, 2, mean)
-      meansOfAllFeatures = c(meansOfAllFeatures, means)
+      blub
     }
-    # Erstelle eine Zeile für das aktuelle Sample
-    sample_row = c(dim = dim, fid = fid, meansOfAllFeatures)
-    # Füge die Zeile zum DataFrame hinzu
-    data.frame(as.list(sample_row))
-  }
   features = bind_rows(features,results_df)
   print(paste0("Finished dim ", dim))
 }
 stopCluster(cl)
+    
+      
+
+
+        
+        
+      }
+      #TODO: Store values to apply scaling before applying mean
+      
+      # Erstelle eine Zeile für das aktuelle Sample
+      
+      # Füge die Zeile zum DataFrame hinzu
+      data.frame(as.list(sample_row))
+    }
+    data.frame
+
 ```
+
+      means = apply(all_features, 2, mean)
+      meansOfAllFeatures = c(meansOfAllFeatures, means)
 
 ```{r Feature Scaling}
 normalize = function(x){
-  return ((x-min(x))/(max(x)-min(x))) #TODO: Global oder pro Dimension
+  return ((x-min(x))/(max(x)-min(x)))
 }
 
 normalized_features = features %>% mutate_at(c("ic.eps.s","ic.eps.max","ic.eps.ratio","ela_meta.lin_simple.intercept","ela_meta.lin_simple.coef.min","ela_meta.lin_simple.coef.max","pca.expl_var.cov_init","pca.expl_var_PC1.cov_init"), normalize)
-
-#TODO: 20 sample in Prager23?
+#TODO: Calculate mean
 ```
 
 ```{r Export}
@@ -108,17 +127,16 @@ relERT = relERT[-1]
 ```
 
 ```{r Preprocessing}
-features <- features[,colSums(is.na(features)) == 0] # TODO: Wie mit na umgehen?
-features <- features %>% select(-c("ela_level.lda_qda_25", "ela_level.lda_mda_25", "ela_level.qda_mda_25")) # TODO: Wie mit inf umgehen?
-features <- features[, sapply(features, function(v) var(v, na.rm=TRUE)!=0)] # TODO: Wie umgehen mit Konstanten?
-# TODO: 105 Features (in Paper 102) -> welche noch zu viel?
+features[sapply(features, is.infinite)] = NA
+features <- features[,colSums(is.na(features)) == 0]
+features <- features[, sapply(features, function(v) var(v, na.rm=TRUE)!=0)]
+
 
 names(relERT)[names(relERT) == "CMA-CSA"] <- "CMA_CSA"
 names(relERT)[names(relERT) == "SMAC-BBOB"] <- "SMAC_BBOB"
 feature_names = colnames(features[3:ncol(features)])
 solver_names = colnames(relERT[3:ncol(relERT)])
 
-# TODO: Was machen, wenn wir mehrere relERT = 1 haben?
 relERT$Best<-colnames(relERT[3:ncol(relERT)])[apply(relERT[3:ncol(relERT)],1,which.min)]
 relERT$Best = as.factor(relERT$Best)
 
