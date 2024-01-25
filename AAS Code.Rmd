@@ -68,22 +68,6 @@ for (dim in dimensions) {
   print(paste0("Finished dim ", dim))
 }
 stopCluster(cl)
-    
-      
-
-
-        
-        
-      }
-      #TODO: Store values to apply scaling before applying mean
-      
-      # Erstelle eine Zeile für das aktuelle Sample
-      
-      # Füge die Zeile zum DataFrame hinzu
-      data.frame(as.list(sample_row))
-    }
-    data.frame
-
 ```
 
       means = apply(all_features, 2, mean)
@@ -95,7 +79,8 @@ normalize = function(x){
 }
 
 normalized_features = features %>% mutate_at(c("ic.eps.s","ic.eps.max","ic.eps.ratio","ela_meta.lin_simple.intercept","ela_meta.lin_simple.coef.min","ela_meta.lin_simple.coef.max","pca.expl_var.cov_init","pca.expl_var_PC1.cov_init"), normalize)
-#TODO: Calculate mean
+
+normalized_features = normalized_features %>% group_by(dim, fid) %>% summarise_all(mean) %>% select(-iid) %>% ungroup()
 ```
 
 ```{r Export}
@@ -109,13 +94,26 @@ scale = function(x){
 }
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 ert_data = read_csv("ert_data.csv")
+ert_data = ert_data[-3]
 
-df_normalized = t(apply(ert_data[-c(1:3)], 1, scale))
+df_normalized = t(apply(ert_data[-c(1:2)], 1, scale))
 PAR10_score = 10 * max(df_normalized[is.finite(df_normalized)])
 df_normalized[!is.finite(df_normalized)] = PAR10_score
 
 relERT = cbind(ert_data[1:2], df_normalized)
 write.csv(relERT,"relERT.csv")
+
+#relERT calculation with feature costs
+ert_data_fc = cbind(ert_data, t(apply(ert_data, 1, function(row) row[-c(1, 2)] + row[1]*50)))
+
+df_normalized_fc = t(apply(ert_data_fc[-c(1:2)], 1, scale))
+
+df_normalized_fc = df_normalized_fc[,-c(1:12)]
+
+df_normalized_fc[!is.finite(df_normalized_fc)] = PAR10_score
+
+relERT_fc = cbind(ert_data[1:2], as.tibble(df_normalized_fc))
+write.csv(relERT_fc,"relERT_featureCosts.csv")
 ```
 
 ```{r Read data}
@@ -137,7 +135,18 @@ names(relERT)[names(relERT) == "SMAC-BBOB"] <- "SMAC_BBOB"
 feature_names = colnames(features[3:ncol(features)])
 solver_names = colnames(relERT[3:ncol(relERT)])
 
-relERT$Best<-colnames(relERT[3:ncol(relERT)])[apply(relERT[3:ncol(relERT)],1,which.min)]
+set.seed(42)
+relERT$Best <- apply(relERT[3:ncol(relERT)], 1, function(x) {
+    minima <- which(x == min(x))
+    colNames <- colnames(relERT[3:ncol(relERT)])
+    if (length(minima) > 1) {
+        return(colNames[sample(minima, 1)])
+    } else {
+        return(colNames[minima])
+    }
+})
+
+
 relERT$Best = as.factor(relERT$Best)
 
 data = merge(features,relERT,by=c("dim","fid"))
