@@ -24,10 +24,6 @@ library(kernlab)
 library(randomForest)
 library(xgboost)
 library(earth)
-
-#traceback() for debugging 
-
-#code Strg + Click on function for source code
 ```
 
 ```{r Feature Calculation}
@@ -167,10 +163,15 @@ for(learner in learners)
 
 ```{r classification model training}
 data_temp = data %>% select(all_of(feature_names), "Best")
+sigest_values = sigest(Best~., data = data_temp)
+sigma = sigest_values[2] # use mean sigest value
 learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
 classif_models = list()
 for (learner in learners){
   classif.lrn = makeLearner(learner)
+  if(learner == "classif.ksvm"){
+    classif.lrn = setHyperPars(classif.lrn, sigma = sigma)
+  }
   classif.task = makeClassifTask(id = learner, data = data_temp, target = "Best")
   model = train(classif.lrn, classif.task)
   classif_models[[learner]] = model
@@ -180,18 +181,6 @@ for (learner in learners){
 ```{r paired regression model training}
 learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
 # TODO: implement
-```
-
-```{r Hyperparameter tuning}
-# TODO: Finish tuning & integrate in model training
-feature_matrix = as.matrix(data %>% select(all_of(feature_names)))
-sigest_values = unname(sigest(feature_matrix))
-discrete_ps = makeParamSet(makeDiscreteParam("sigma", values = sigest_values))
-rdesc = makeResampleDesc("CV", iters = 3L)
-ctrl = makeTuneControlGrid()
-classif.task = makeClassifTask(id = "classif.ksvm", data = data_temp, target = "Best")
-res = tuneParams("classif.ksvm", task = classif.task, resampling = rdesc,
-  par.set = discrete_ps, control = ctrl)
 ```
 
 
