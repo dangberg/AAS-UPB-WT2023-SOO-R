@@ -180,7 +180,26 @@ for (learner in learners){
 
 ```{r paired regression model training}
 learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
-# TODO: implement
+pair_regr_models = list()
+for(learner in learners)
+{
+  regr.lrn = makeLearner(learner)
+  for(solverA in 1:(length(solver_names)-1)){
+    for(solverB in (solverA+1):length(solver_names)){
+      solverAName = solver_names[solverA]
+      solverBName = solver_names[solverB]
+      name = paste(learner, solverAName, solverBName)
+      
+      data_temp = data %>% 
+        select(all_of(feature_names), solverAName, solverBName) %>%
+        mutate(solverDiff := .data[[solverAName]] - .data[[solverBName]]) %>%
+        select(-solverAName, -solverBName)
+      regr.task = makeRegrTask(id = name, data = data_temp, target = "solverDiff")
+      model = train(regr.lrn, regr.task)
+      pair_regr_models[[name]] = model
+    }
+  }
+}
 ```
 
 
