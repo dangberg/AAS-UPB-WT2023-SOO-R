@@ -280,16 +280,10 @@ model_validation_pair_regr = function(data, learner){
       }
     }
     
-    print(solverDiffs)
     sumDiffs = rowSums(solverDiffs)
-    print(sumDiffs)
     predictedAlgo = names(sumDiffs[sumDiffs == min(sumDiffs)])
-    print(predictedAlgo)
     predictionRelERT = data_val[[predictedAlgo]] # TODO: also for including costs
-    print(predictionRelERT)
     relERTPredictions = c(relERTPredictions, predictionRelERT)
-    print(relERTPredictions)
-    break
   }
   
   # calculate mean relERT
