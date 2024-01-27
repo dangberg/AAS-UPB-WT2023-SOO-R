@@ -169,46 +169,6 @@ relERT$Best = as.factor(relERT$Best)
 data = merge(features,relERT,by=c("dim","fid"))
 ```
 
-```{r Regression model training}
-learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
-regr_models = list()
-for(learner in learners)
-{
-  regr.lrn = makeLearner(learner)
-  for(solver in solver_names){
-    name = paste(learner, solver)
-    data_temp = data %>% select(all_of(feature_names), solver)
-    regr.task = makeRegrTask(id = name, data = data_temp, target = solver)
-    model = train(regr.lrn, regr.task)
-    regr_models[[name]] = model
-  }
-}
-```
-
-```{r Paired regression model training}
-learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
-pair_regr_models = list()
-for(learner in learners)
-{
-  regr.lrn = makeLearner(learner)
-  for(solverA in 1:(length(solver_names)-1)){
-    for(solverB in (solverA+1):length(solver_names)){
-      solverAName = solver_names[solverA]
-      solverBName = solver_names[solverB]
-      name = paste(learner, solverAName, solverBName)
-      
-      data_temp = data %>% 
-        select(all_of(feature_names), solverAName, solverBName) %>%
-        mutate(solverDiff := .data[[solverAName]] - .data[[solverBName]]) %>%
-        select(-solverAName, -solverBName)
-      regr.task = makeRegrTask(id = name, data = data_temp, target = "solverDiff")
-      model = train(regr.lrn, regr.task)
-      pair_regr_models[[name]] = model
-    }
-  }
-}
-```
-
 ```{r Feature selection}
 data_temp = data %>% select(all_of(feature_names), "Best")
 learner = "classif.ksvm"
@@ -264,7 +224,7 @@ model_validation_regr = function(data, learner){
     data_val = data[index,]
     solverRelERTPred = structure(numeric(0), names=character(0))
     for(solver in solver_names){
-        data_train = data[-index, ] %>% select(all_of(feature_names), solver)
+        data_train = data[-index, ] %>% select(all_of(feature_names), all_of(solver))
         learnerAlgo = makeLearner(learner)
         task = makeRegrTask(data = data_train, target = solver)
         model = train(learnerAlgo, task)
@@ -291,9 +251,61 @@ for(learner in learners){
 }
 ```
 
+```{r Paired regression model validation}
+model_validation_pair_regr = function(data, learner){
+  # leave-one-(function)-out cross-validation
+  relERTPredictions = c()
+  for(index in 1:nrow(data)){
+    data_val = data[index,]
+    solverDiffs = matrix(0, length(solver_names), length(solver_names))
+    rownames(solverDiffs) = solver_names
+    colnames(solverDiffs) = solver_names
+    for(solverA in 1:(length(solver_names)-1)){
+      for(solverB in (solverA+1):length(solver_names)){
+        solverAName = solver_names[solverA]
+        solverBName = solver_names[solverB]
+        data_train = data[-index, ] %>% 
+          select(all_of(feature_names), all_of(solverAName), all_of(solverBName)) %>%
+          mutate(solverDiff := .data[[solverAName]] - .data[[solverBName]]) %>%
+          select(-solverAName, -solverBName)
+        learnerAlgo = makeLearner(learner)
+        task = makeRegrTask(data = data_train, target = "solverDiff")
+        model = train(learnerAlgo, task)
+        
+        prediction = predict(model, newdata = data_val %>% select(all_of(feature_names)))
+        prediction = as.data.frame(prediction)
+        predictedDiff = prediction[1, 1]
+        solverDiffs[solverA, solverB] = predictedDiff
+        solverDiffs[solverB, solverA] = -predictedDiff
+      }
+    }
+    
+    print(solverDiffs)
+    sumDiffs = rowSums(solverDiffs)
+    print(sumDiffs)
+    predictedAlgo = names(sumDiffs[sumDiffs == min(sumDiffs)])
+    print(predictedAlgo)
+    predictionRelERT = data_val[[predictedAlgo]] # TODO: also for including costs
+    print(predictionRelERT)
+    relERTPredictions = c(relERTPredictions, predictionRelERT)
+    print(relERTPredictions)
+    break
+  }
+  
+  # calculate mean relERT
+  mean(relERTPredictions)
+}
+
+learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
+for(learner in learners){
+  predicted_relERT = model_validation_pair_regr(data, learner)
+  print(paste0(learner, " : ", predicted_relERT))
+  break
+}
+```
+
 ```{r SBS calculation}
 meanRelERT = colMeans(relERT[solver_names])
 SBSrelERT = min(meanRElERT)
 SBS = names(meanRelERT)[meanRelERT == SBSrelERT]
 ```
-
