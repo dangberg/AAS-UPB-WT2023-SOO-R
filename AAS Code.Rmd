@@ -146,18 +146,15 @@ relERT = relERT[-1]
 ```{r Preprocessing}
 set.seed(42)
 
-# Scale all features
-features[3:ncol(features)] = apply(features[3:ncol(features)], 2, scale)
-
 # Store column names for training
 feature_names = colnames(features[3:ncol(features)])
 solver_names = colnames(relERT[3:ncol(relERT)])
 
-# merge both data sets
-data = merge(features,relERT,by=c("dim","fid"))
+# Scale all features
+features[3:ncol(features)] = apply(features[3:ncol(features)], 2, scale)
 
 # calculate best solver per function (random selection for multiple best solvers)
-data$Best = apply(relERT[3:ncol(relERT)], 1, function(x) {
+relERT$Best = apply(relERT[3:ncol(relERT)], 1, function(x) {
     minima <- which(x == min(x))
     colNames <- colnames(relERT[3:ncol(relERT)])
     if (length(minima) > 1) {
@@ -166,7 +163,10 @@ data$Best = apply(relERT[3:ncol(relERT)], 1, function(x) {
         return(colNames[minima])
     }
 })
-data$Best = as.factor(data$Best)
+relERT$Best = as.factor(relERT$Best)
+
+# merge both data sets
+data = merge(features,relERT,by=c("dim","fid"))
 ```
 
 ```{r Regression model training}
@@ -182,23 +182,6 @@ for(learner in learners)
     model = train(regr.lrn, regr.task)
     regr_models[[name]] = model
   }
-}
-```
-
-```{r Classification model training}
-data_temp = data %>% select(all_of(feature_names), "Best")
-sigest_values = sigest(Best~., data = data_temp)
-sigma = sigest_values[2] # use mean sigest value
-learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
-classif_models = list()
-for (learner in learners){
-  classif.lrn = makeLearner(learner)
-  if(learner == "classif.ksvm"){
-    classif.lrn = setHyperPars(classif.lrn, sigma = sigma)
-  }
-  classif.task = makeClassifTask(id = learner, data = data_temp, target = "Best")
-  model = train(classif.lrn, classif.task)
-  classif_models[[learner]] = model
 }
 ```
 
@@ -236,3 +219,46 @@ rdesc = makeResampleDesc("LOO")
 f = selectFeatures(classif.lrn, classif.task, rdesc, control = control)
 analyzeFeatSelResult(f)
 ```
+
+```{r}
+model_validation_classif = function(data, learner){
+  # leave-one-(function)-out cross-validation
+  relERTPredictions = c()
+  for(index in 1:nrow(data)){
+    data_train = data[-index, ] %>% select(all_of(feature_names), "Best")
+    data_val = data[index,]
+    
+    learnerAlgo = makeLearner(learner)
+    if(learner == "classif.ksvm"){
+      sigest_values = sigest(Best~., data = data_train)
+      sigma = sigest_values[2] # use mean sigest value
+      learnerAlgo = setHyperPars(learnerAlgo, sigma = sigma)
+    }
+    
+    task = makeClassifTask(data = data_train, target = "Best")
+    model = train(learnerAlgo, task)
+    
+    prediction = predict(model, newdata = data_val %>% select(all_of(feature_names)))
+    prediction = as.data.frame(prediction)
+    predictedAlgo = as.character(prediction[1, 1])
+    predictionRelERT = data_val[[predictedAlgo]] # TODO: also for including costs
+    relERTPredictions = c(relERTPredictions, predictionRelERT)
+  }
+  
+  # calculate mean relERT
+  mean(relERTPredictions)
+}
+
+learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
+for(learner in learners){
+  predicted_relERT = model_validation_classif(data, learner)
+  print(paste0(learner, " : ", predicted_relERT))
+}
+```
+
+```{r SBS calculation}
+meanRelERT = colMeans(relERT[solver_names])
+SBSrelERT = min(meanRElERT)
+SBS = names(meanRelERT)[meanRelERT == SBSrelERT]
+```
+
