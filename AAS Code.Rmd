@@ -30,14 +30,17 @@ library(earth)
 ```{r Feature Calculation}
 set.seed(42)
 
-normalize = function(x){
+# function for scaling the function values according to prager23nullifying
+minMaxScaling = function(x){
   return ((x-min(x))/(max(x)-min(x)))
 }
 
+# detect cores for parallel execution
 cores = detectCores()
 cl = makeCluster(cores[1]-1)
 registerDoParallel(cl)
 
+# initialize parameters for feature calculation
 feature_sets = c("ela_curv","ela_conv","ela_distr","ela_level","ela_local","ela_meta","basic","cm_angle","disp","ic","nbc","pca")
 features_normalization <- hash()
 features_normalization[["ic"]] = c("ic.eps.s","ic.eps.max","ic.eps.ratio")
@@ -47,13 +50,13 @@ dimensions = c(2L,3L,5L,10L)
 fids = 1:24
 iids = 1:5
 
-
+# calculate features for all dimensions X fids X iids 
 features= tibble()
 #Set domain of the sampled functions
 control = list("init_sample.lower" = -5, "init_sample.upper" = 5, "init_sample.type" = "lhs")
 for (dim in dimensions) {
   X <- createInitialSample(n.obs = 50 * dim, dim = dim, control = control)
-  
+    # parallel execution per fid
     results_df = foreach(fid=fids, .combine = bind_rows, .packages = c("tidyverse","flacco","smoof")) %dopar% {
       all_features_fid = tibble()
       for (iid in iids) {
@@ -63,8 +66,9 @@ for (dim in dimensions) {
             y = apply(X, 1, fn)
             feat.object = createFeatureObject(X = X, y = y, fun = fn)
             featureSet = calculateFeatureSet(feat.object, set = feature_set)
+            # separate calculation for features that need scaled function values as input (according to prager23nullifying)
             if(!is.null(features_normalization[[feature_set]])){
-              yNorm = normalize(y)
+              yNorm = minMaxScaling(y)
               feat.objectNorm = createFeatureObject(X = X, y = yNorm, fun = fn)
               featureSetNorm = calculateFeatureSet(feat.objectNorm, set = feature_set)
               featureSet[features_normalization[[feature_set]]] = featureSetNorm
@@ -82,48 +86,56 @@ for (dim in dimensions) {
 stopCluster(cl)
 ```
 
-```{r Mean calculation & filtering}
+```{r Feature mean calculation & filtering}
+# calculate mean per fid
 features = features %>% group_by(dim, fid) %>% summarise_all(mean) %>% select(-iid) %>% ungroup()
 
+# filter out not valid columns (containing INF, NA or constant values)
 features[sapply(features, is.infinite)] = NA
 features <- features[,colSums(is.na(features)) == 0]
 features <- features[, sapply(features, function(v) var(v, na.rm=TRUE)!=0)]
 ```
 
-```{r Export}
+```{r Feature export}
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 write.csv(features,"features.csv")
 ```
 
-```{r relERT calculation}
-scale = function(x){
+```{r relERT calculations}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+ert_data = read_csv("ert_data.csv")
+# remove repetition column
+ert_data = ert_data[-3]
+# rename columns so that they are usable with mlr
+names(ert_data)[names(ert_data) == "CMA-CSA"] = "CMA_CSA"
+names(ert_data)[names(ert_data) == "SMAC-BBOB"] = "SMAC_BBOB"
+
+# scale ERT by min ERT for the function
+scaleERT = function(x){
   return (x / min(x))
 }
-setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
-ert_data = read_csv("ert_data.csv")
-ert_data = ert_data[-3]
-
-df_normalized = t(apply(ert_data[-c(1:2)], 1, scale))
+df_normalized = t(apply(ert_data[-c(1:2)], 1, scaleERT))
+# PAR10 score for INF execution time
 PAR10_score = 10 * max(df_normalized[is.finite(df_normalized)])
 df_normalized[!is.finite(df_normalized)] = PAR10_score
 
+#  save data
 relERT = cbind(ert_data[1:2], df_normalized)
 write.csv(relERT,"relERT.csv")
 
-#relERT calculation with feature costs
+# repeat relERT calculation including feature costs
 ert_data_fc = cbind(ert_data, t(apply(ert_data, 1, function(row) row[-c(1, 2)] + row[1]*50)))
-
-df_normalized_fc = t(apply(ert_data_fc[-c(1:2)], 1, scale))
-
+df_normalized_fc = t(apply(ert_data_fc[-c(1:2)], 1, scaleERT))
 df_normalized_fc = df_normalized_fc[,-c(1:12)]
-
 df_normalized_fc[!is.finite(df_normalized_fc)] = PAR10_score
 
-relERT_fc = cbind(ert_data[1:2], as.tibble(df_normalized_fc))
+relERT_fc = cbind(ert_data[1:2], as_tibble(df_normalized_fc))
 write.csv(relERT_fc,"relERT_featureCosts.csv")
 ```
 
 ```{r Read data}
+# Read pre calculated data
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 features = read_csv("features.csv")
 relERT = read_csv("relERT.csv")
@@ -132,14 +144,20 @@ relERT = relERT[-1]
 ```
 
 ```{r Preprocessing}
-names(relERT)[names(relERT) == "CMA-CSA"] <- "CMA_CSA"
-names(relERT)[names(relERT) == "SMAC-BBOB"] <- "SMAC_BBOB"
+set.seed(42)
 
+# Scale all features
+features[3:ncol(features)] = apply(features[3:ncol(features)], 2, scale)
+
+# Store column names for training
 feature_names = colnames(features[3:ncol(features)])
 solver_names = colnames(relERT[3:ncol(relERT)])
 
-set.seed(42)
-relERT$Best <- apply(relERT[3:ncol(relERT)], 1, function(x) {
+# merge both data sets
+data = merge(features,relERT,by=c("dim","fid"))
+
+# calculate best solver per function (random selection for multiple best solvers)
+data$Best = apply(relERT[3:ncol(relERT)], 1, function(x) {
     minima <- which(x == min(x))
     colNames <- colnames(relERT[3:ncol(relERT)])
     if (length(minima) > 1) {
@@ -148,14 +166,10 @@ relERT$Best <- apply(relERT[3:ncol(relERT)], 1, function(x) {
         return(colNames[minima])
     }
 })
-
-
-relERT$Best = as.factor(relERT$Best)
-
-data = merge(features,relERT,by=c("dim","fid"))
+data$Best = as.factor(data$Best)
 ```
 
-```{r regression model training}
+```{r Regression model training}
 learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
 regr_models = list()
 for(learner in learners)
@@ -171,7 +185,7 @@ for(learner in learners)
 }
 ```
 
-```{r classification model training}
+```{r Classification model training}
 data_temp = data %>% select(all_of(feature_names), "Best")
 sigest_values = sigest(Best~., data = data_temp)
 sigma = sigest_values[2] # use mean sigest value
@@ -188,7 +202,7 @@ for (learner in learners){
 }
 ```
 
-```{r paired regression model training}
+```{r Paired regression model training}
 learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
 pair_regr_models = list()
 for(learner in learners)
@@ -212,9 +226,13 @@ for(learner in learners)
 }
 ```
 
-```{r feature selection}
-
-#TODO: feature selection
+```{r Feature selection}
+data_temp = data %>% select(all_of(feature_names), "Best")
+learner = "classif.ksvm"
+classif.lrn = makeLearner(learner)
+classif.task = makeClassifTask(id = learner, data = data_temp, target = "Best")
+control = makeFeatSelControlSequential(method = "sffs")
+rdesc = makeResampleDesc("LOO")
+f = selectFeatures(classif.lrn, classif.task, rdesc, control = control)
+analyzeFeatSelResult(f)
 ```
-
-
