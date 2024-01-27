@@ -12,6 +12,7 @@ library(e1071)
 library(mda)
 library(plyr)
 library(RANN)
+library(hash)
 # Data processing
 library(tidyverse)
 # Parallel execution
@@ -32,13 +33,16 @@ set.seed(42)
 normalize = function(x){
   return ((x-min(x))/(max(x)-min(x)))
 }
-#TODO: normalizing
 
 cores = detectCores()
 cl = makeCluster(cores[1]-1)
 registerDoParallel(cl)
 
-feature_sets <- c("ela_curv","ela_conv","ela_distr","ela_level","ela_local","ela_meta","basic","cm_angle","disp","ic","nbc","pca")
+feature_sets = c("ela_curv","ela_conv","ela_distr","ela_level","ela_local","ela_meta","basic","cm_angle","disp","ic","nbc","pca")
+features_normalization <- hash()
+features_normalization[["ic"]] = c("ic.eps.s","ic.eps.max","ic.eps.ratio")
+features_normalization[["ela_meta"]] = c("ela_meta.lin_simple.intercept","ela_meta.lin_simple.coef.min","ela_meta.lin_simple.coef.max")
+features_normalization[["pca"]] = c("pca.expl_var.cov_init","pca.expl_var_PC1.cov_init")
 dimensions = c(2L,3L,5L,10L)
 fids = 1:24
 iids = 1:5
@@ -51,38 +55,44 @@ for (dim in dimensions) {
   X <- createInitialSample(n.obs = 50 * dim, dim = dim, control = control)
   
     results_df = foreach(fid=fids, .combine = bind_rows, .packages = c("tidyverse","flacco","smoof")) %dopar% {
-      blub = tibble()
+      all_features_fid = tibble()
       for (iid in iids) {
-          all_features = c()
+          all_features_iid = c()
           for (feature_set in feature_sets){
             fn = makeBBOBFunction(dimensions = dim, fid = fid, iid = iid)
             y = apply(X, 1, fn)
             feat.object = createFeatureObject(X = X, y = y, fun = fn)
             featureSet = calculateFeatureSet(feat.object, set = feature_set)
-            all_features = c(all_features, as_tibble(featureSet))
+            if(!is.null(features_normalization[[feature_set]])){
+              yNorm = normalize(y)
+              feat.objectNorm = createFeatureObject(X = X, y = yNorm, fun = fn)
+              featureSetNorm = calculateFeatureSet(feat.objectNorm, set = feature_set)
+              featureSet[features_normalization[[feature_set]]] = featureSetNorm
+            }
+            all_features_iid = c(all_features_iid, as_tibble(featureSet))
           }
-          sample_row = c(dim = dim, fid = fid, iid = iid, all_features)
-          blub = bind_rows(blub,sample_row)
+          row_iid = c(dim = dim, fid = fid, iid = iid, all_features_iid)
+          all_features_fid = bind_rows(all_features_fid, row_iid)
       }
-      blub
+      all_features_fid
     }
-  features = bind_rows(features,results_df)
+  features = bind_rows(features, results_df)
   print(paste0("Finished dim ", dim))
 }
 stopCluster(cl)
 ```
 
-```{r Feature Scaling}
+```{r Mean calculation & filtering}
+features = features %>% group_by(dim, fid) %>% summarise_all(mean) %>% select(-iid) %>% ungroup()
 
-
-normalized_features = features %>% mutate_at(c("ic.eps.s","ic.eps.max","ic.eps.ratio","ela_meta.lin_simple.intercept","ela_meta.lin_simple.coef.min","ela_meta.lin_simple.coef.max","pca.expl_var.cov_init","pca.expl_var_PC1.cov_init"), normalize) #TODO normalizing verschieben
-
-normalized_features = normalized_features %>% group_by(dim, fid) %>% summarise_all(mean) %>% select(-iid) %>% ungroup()
+features[sapply(features, is.infinite)] = NA
+features <- features[,colSums(is.na(features)) == 0]
+features <- features[, sapply(features, function(v) var(v, na.rm=TRUE)!=0)]
 ```
 
 ```{r Export}
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
-write.csv(normalized_features,"features.csv")
+write.csv(features,"features.csv")
 ```
 
 ```{r relERT calculation}
@@ -122,13 +132,9 @@ relERT = relERT[-1]
 ```
 
 ```{r Preprocessing}
-features[sapply(features, is.infinite)] = NA
-features <- features[,colSums(is.na(features)) == 0]
-features <- features[, sapply(features, function(v) var(v, na.rm=TRUE)!=0)]
-
-
 names(relERT)[names(relERT) == "CMA-CSA"] <- "CMA_CSA"
 names(relERT)[names(relERT) == "SMAC-BBOB"] <- "SMAC_BBOB"
+
 feature_names = colnames(features[3:ncol(features)])
 solver_names = colnames(relERT[3:ncol(relERT)])
 
