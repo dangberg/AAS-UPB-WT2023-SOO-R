@@ -220,7 +220,7 @@ f = selectFeatures(classif.lrn, classif.task, rdesc, control = control)
 analyzeFeatSelResult(f)
 ```
 
-```{r}
+```{r Classification model validation}
 model_validation_classif = function(data, learner){
   # leave-one-(function)-out cross-validation
   relERTPredictions = c()
@@ -252,6 +252,41 @@ model_validation_classif = function(data, learner){
 learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
 for(learner in learners){
   predicted_relERT = model_validation_classif(data, learner)
+  print(paste0(learner, " : ", predicted_relERT))
+}
+```
+
+```{r Regression model validation}
+model_validation_regr = function(data, learner){
+  # leave-one-(function)-out cross-validation
+  relERTPredictions = c()
+  for(index in 1:nrow(data)){
+    data_val = data[index,]
+    solverRelERTPred = structure(numeric(0), names=character(0))
+    for(solver in solver_names){
+        data_train = data[-index, ] %>% select(all_of(feature_names), solver)
+        learnerAlgo = makeLearner(learner)
+        task = makeRegrTask(data = data_train, target = solver)
+        model = train(learnerAlgo, task)
+        
+        prediction = predict(model, newdata = data_val %>% select(all_of(feature_names)))
+        prediction = as.data.frame(prediction)
+        predictedRelERT = prediction[1, 1]
+        solverRelERTPred[solver] = predictedRelERT
+    }
+
+    predictedAlgo = names(solverRelERTPred[solverRelERTPred == min(solverRelERTPred)])
+    predictionRelERT = data_val[[predictedAlgo]] # TODO: also for including costs
+    relERTPredictions = c(relERTPredictions, predictionRelERT)
+  }
+  
+  # calculate mean relERT
+  mean(relERTPredictions)
+}
+
+learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
+for(learner in learners){
+  predicted_relERT = model_validation_regr(data, learner)
   print(paste0(learner, " : ", predicted_relERT))
 }
 ```
