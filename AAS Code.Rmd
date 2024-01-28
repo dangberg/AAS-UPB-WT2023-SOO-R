@@ -20,6 +20,7 @@ library(foreach)
 library(doParallel)
 # Model training
 library(mlr)
+library(parallelMap)
 library(rpart)
 library(kernlab)
 library(randomForest)
@@ -190,7 +191,10 @@ feature_selection = function(learner, task, strategy){
     "ga" = makeFeatSelControlGA(lambda = 5, maxit = 100),
     "ga2" = makeFeatSelControlGA(lambda = 50, maxit = 100)
   )
+  cores = detectCores()
+  parallelStartSocket(cores[1])
   sf = selectFeatures(learner, task, rdesc, control = control, show.info = FALSE)
+  parallelStop()
   return(sf[["x.bit.names"]])
 }
 ```
