@@ -461,3 +461,31 @@ ggplot(df, aes(x = relERT_FC, y = HCMA, color = fid)) +
   theme_bw() + 
   theme(legend.position = "bottom") 
 ```
+
+```{r}
+a = aes(x=as.numeric(fid), y=relERT)
+b = aes(x=as.numeric(fid), y=HCMA)
+
+df %>% filter(dim == 2) %>%
+ggplot() +
+  scale_x_continuous(limits = c(1,24), expand = c(0, 0.1)) +
+  scale_y_log10() +
+  geom_line(a, color = "red")+
+  geom_point(a)+
+  geom_line(b, color = "green")+
+  geom_point(b) + 
+  geom_ribbon(aes(x=as.numeric(fid), ymax=relERT, ymin=HCMA), fill="grey", alpha=.5)
+  
+```
+
+```{r}
+library(ggallin)
+test = df %>% filter(dim == 2) %>% mutate(diff = HCMA - relERT)
+
+ggplot(test, aes(x=fid, y=diff)) +
+  #scale_y_log10() +
+  geom_col() +
+  scale_y_continuous(trans = pseudolog10_trans)
+  
+```
+
