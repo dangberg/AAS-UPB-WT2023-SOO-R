@@ -190,7 +190,7 @@ feature_selection = function(learner, task, strategy){
     "ga" = makeFeatSelControlGA(lambda = 5, maxit = 100),
     "ga2" = makeFeatSelControlGA(lambda = 50, maxit = 100)
   )
-  sf = selectFeatures(learner, task, rdesc, control = control, show.info = TRUE)
+  sf = selectFeatures(learner, task, rdesc, control = control, show.info = FALSE)
   return(sf[["x.bit.names"]])
 }
 ```
@@ -209,7 +209,7 @@ createLearnerClassif = function(data, learnerName, selected_features){
 
 model_validation_classif = function(data, learnerName, selected_features, sigma = NA){
   set.seed(42)
-  learnerAlgo = createLearner(data, learnerName, selected_features)
+  learnerAlgo = createLearnerClassif(data, learnerName, selected_features)
 
   # leave-one-(function)-out cross-validation
   relERTPredictions = tibble()
@@ -389,10 +389,10 @@ for(learnerName in learners){
     # feature selection
     data_train = data %>% 
           select(all_of(feature_names), "BSqi", "BSrr") %>%
-          mutate(solverDiff := "BSqi" - "BSrr") %>%
+          mutate(solverDiff = .data$BSqi - .data$BSrr) %>%
           select(-"BSqi", -"BSrr")
     learner = makeLearner(learnerName)
-    task = makeRegrTask(data = data_train, target = solverDiff)
+    task = makeRegrTask(data = data_train, target = "solverDiff")
     sel_features = feature_selection(learner, task, strategy)
     predictions_pair_regr[[name]] = sel_features
     
@@ -438,13 +438,5 @@ base_plot <- ggplot(df, aes(x = Model1, y = SBS, color = FID)) +
   geom_abline(slope = 1, intercept = 0, color = "grey80", linetype = "dashed") + 
   theme_bw() + 
   theme(legend.position = "bottom") 
-
-# Create a facet grid of plots
-final_plot <- base_plot + 
-  facet_grid(Model ~ Condition) +
-  theme(legend.position = "bottom") +
-  guides(color = guide_legend(title = "BBOB-Group"), shape = guide_legend(title = "Function ID"))
-
-# Display the plot
-print(final_plot)
+base_plot
 ```
