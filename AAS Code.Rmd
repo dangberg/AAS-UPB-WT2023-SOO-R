@@ -183,7 +183,7 @@ feature_selection = function(learner, task, strategy){
   if(strategy == "all"){
     return(feature_names)
   }
-  rdesc = makeResampleDesc("LOO")
+  rdesc = makeResampleDesc("CV")
   control = switch(
     strategy,
     "sffs" = makeFeatSelControlSequential(method = "sffs"),
