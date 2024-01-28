@@ -64,12 +64,12 @@ for (dim in dimensions) {
           for (feature_set in feature_sets){
             fn = makeBBOBFunction(dimensions = dim, fid = fid, iid = iid)
             y = apply(X, 1, fn)
-            feat.object = createFeatureObject(X = X, y = y, fun = fn)
+            feat.object = createFeatureObject(X = X, y = y, fun = fn, blocks = 3, force = TRUE)
             featureSet = calculateFeatureSet(feat.object, set = feature_set)
             # separate calculation for features that need scaled function values as input (according to prager23nullifying)
             if(!is.null(features_normalization[[feature_set]])){
               yNorm = minMaxScaling(y)
-              feat.objectNorm = createFeatureObject(X = X, y = yNorm, fun = fn)
+              feat.objectNorm = createFeatureObject(X = X, y = yNorm, fun = fn, blocks = 3, force = TRUE)
               featureSetNorm = calculateFeatureSet(feat.objectNorm, set = feature_set)
               featureSet[features_normalization[[feature_set]]] = featureSetNorm
             }
@@ -166,14 +166,14 @@ relERT$Best = apply(relERT[3:ncol(relERT)], 1, function(x) {
 relERT$Best = as.factor(relERT$Best)
 
 # merge both data sets
-data = merge(features,relERT,by=c("dim","fid"))
+data = merge(features,relERT,by=c("dim","fid")) %>% arrange(dim, fid)
 ```
 
 ```{r Feature selection}
-data_temp = data %>% select(all_of(feature_names), "Best")
-learner = "classif.ksvm"
+data_train = data %>% select(all_of(feature_names), "Best")
+learner = "classif.rpart"
 classif.lrn = makeLearner(learner)
-classif.task = makeClassifTask(id = learner, data = data_temp, target = "Best")
+classif.task = makeClassifTask(data = data_train, target = "Best")
 control = makeFeatSelControlSequential(method = "sffs")
 rdesc = makeResampleDesc("LOO")
 f = selectFeatures(classif.lrn, classif.task, rdesc, control = control)
@@ -181,55 +181,71 @@ analyzeFeatSelResult(f)
 ```
 
 ```{r Classification model validation}
-model_validation_classif = function(data, learner){
+model_validation_classif = function(data, learner, selected_features){
+  learnerAlgo = makeLearner(learner)
+  if(learner == "classif.ksvm"){
+    data_train = data %>% select(all_of(selected_features), "Best")
+    sigest_values = sigest(Best~., data = data_train)
+    sigma = sigest_values[2] # use mean sigest value
+    learnerAlgo = setHyperPars(learnerAlgo, sigma = sigma)
+  }
+  
   # leave-one-(function)-out cross-validation
-  relERTPredictions = c()
+  relERTPredictions = tibble()
   for(index in 1:nrow(data)){
-    data_train = data[-index, ] %>% select(all_of(feature_names), "Best")
+    data_train = data[-index, ] %>% select(all_of(selected_features), "Best")
     data_val = data[index,]
-    
-    learnerAlgo = makeLearner(learner)
-    if(learner == "classif.ksvm"){
-      sigest_values = sigest(Best~., data = data_train)
-      sigma = sigest_values[2] # use mean sigest value
-      learnerAlgo = setHyperPars(learnerAlgo, sigma = sigma)
-    }
     
     task = makeClassifTask(data = data_train, target = "Best")
     model = train(learnerAlgo, task)
     
-    prediction = predict(model, newdata = data_val %>% select(all_of(feature_names)))
+    prediction = predict(model, newdata = data_val %>% select(all_of(selected_features)))
     prediction = as.data.frame(prediction)
     predictedAlgo = as.character(prediction[1, 1])
     predictionRelERT = data_val[[predictedAlgo]] # TODO: also for including costs
-    relERTPredictions = c(relERTPredictions, predictionRelERT)
+    row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT)
+    relERTPredictions = bind_rows(relERTPredictions, row)
   }
   
-  # calculate mean relERT
-  mean(relERTPredictions)
+  relERTPredictions
 }
 
-learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
-for(learner in learners){
-  predicted_relERT = model_validation_classif(data, learner)
-  print(paste0(learner, " : ", predicted_relERT))
-}
+#sel_features = feature_names
+sel_features = c("ela_distr.skewness", "ela_distr.kurtosis", "ela_distr.number_of_peaks", "ela_level.lda_mda_10", "ic.h.max", "ic.eps.s", "cm_angle.dist_ctr2worst.mean", "basic.objective_min")
+
+set.seed(42)
+predicted_relERT = model_validation_classif(data, "classif.ksvm", sel_features)
+
+# calculate mean relERT
+predicted_relERT$relERT = as.numeric(predicted_relERT$relERT)
+print(mean(predicted_relERT$relERT))
+
+#learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
+#for(learner in learners){
+#  predicted_relERT = model_validation_classif(data, learner, feature_names)
+#  print(paste0(learner, " : ", predicted_relERT))
+#}
 ```
 
 ```{r Regression model validation}
-model_validation_regr = function(data, learner){
+model_validation_regr = function(data, learner, selected_features){
   # leave-one-(function)-out cross-validation
   relERTPredictions = c()
-  for(index in 1:nrow(data)){
+  
+  cores = detectCores()
+  cl = makeCluster(cores[1]-1)
+  registerDoParallel(cl)
+  solver_names = solver_names
+  relERTPredictions = foreach(index=1:nrow(data), .combine = bind_rows, .packages = c("tidyverse", "mlr")) %dopar% {
     data_val = data[index,]
     solverRelERTPred = structure(numeric(0), names=character(0))
     for(solver in solver_names){
-        data_train = data[-index, ] %>% select(all_of(feature_names), all_of(solver))
+        data_train = data[-index, ] %>% select(all_of(selected_features), all_of(solver))
         learnerAlgo = makeLearner(learner)
         task = makeRegrTask(data = data_train, target = solver)
         model = train(learnerAlgo, task)
         
-        prediction = predict(model, newdata = data_val %>% select(all_of(feature_names)))
+        prediction = predict(model, newdata = data_val %>% select(all_of(selected_features)))
         prediction = as.data.frame(prediction)
         predictedRelERT = prediction[1, 1]
         solverRelERTPred[solver] = predictedRelERT
@@ -237,18 +253,30 @@ model_validation_regr = function(data, learner){
 
     predictedAlgo = names(solverRelERTPred[solverRelERTPred == min(solverRelERTPred)])
     predictionRelERT = data_val[[predictedAlgo]] # TODO: also for including costs
-    relERTPredictions = c(relERTPredictions, predictionRelERT)
+    row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT)
+    row
   }
   
-  # calculate mean relERT
-  mean(relERTPredictions)
+  stopCluster(cl)
+  relERTPredictions
 }
 
-learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
-for(learner in learners){
-  predicted_relERT = model_validation_regr(data, learner)
-  print(paste0(learner, " : ", predicted_relERT))
-}
+#sel_features = feature_names
+sel_features = c("ela_distr.skewness", "ela_distr.kurtosis", "ela_distr.number_of_peaks", "ela_level.lda_mda_10", "ic.h.max", "ic.eps.s", "cm_angle.dist_ctr2worst.mean", "basic.objective_min")
+
+set.seed(42)
+predicted_relERT = model_validation_regr(data, "regr.randomForest", sel_features)
+  # calculate mean relERT
+predicted_relERT$relERT = as.numeric(predicted_relERT$relERT)
+print(mean(predicted_relERT$relERT))
+
+filtered_pred = predicted_relERT %>% filter(dim != 3)
+print(mean(filtered_pred$relERT))
+#learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
+#for(learner in learners){
+#  predicted_relERT = model_validation_regr(data, learner, feature_names)
+#  print(paste0(learner, " : ", predicted_relERT))
+#}
 ```
 
 ```{r Paired regression model validation}
