@@ -419,28 +419,45 @@ SBSrelERT = min(meanRElERT)
 SBS = names(meanRelERT)[meanRelERT == SBSrelERT]
 ```
 
-```{r Plot classification model results}
-predictions_classif = readRDS("predictions_classif.RData")
-selectedFeatures_classif = readRDS("selectedFeatures_classif.RData")
+```{r Plot model results}
+# load data for plotting
+relERT = read_csv("relERT.csv")
+predictions_classif = readRDS("predictions_classif.RData") # TODO: For all types of models
+selectedFeatures_classif = readRDS("selectedFeatures_classif.RData") # TODO: For all types of models
 
-# Create the base plot
-ERT_Model1 = predictions_classif$`classif.rpart _ sffs` %>% filter(dim == 3)
-ERT_SBS = data %>% filter(dim == 3)
+# select data for plotting
+model = predictions_classif$`classif.rpart _ sffs` # TODO: For every model
+sbs = relERT %>% select(fid, dim, HCMA)
 
-df <- data.frame(
-  Model1 = ERT_Model1$relERT,
-  SBS = ERT_SBS$HCMA,
-  FID = as.factor(ERT_Model1$fid)
-)
-sorted_fids = order(levels(df$FID))
-df$FID <- factor(df$FID, levels = sorted_fids)
+# create factors for plotting
+df = merge(model, sbs, by=c("dim","fid"))
+df$dim = as.factor(df$dim)
+sorted_dims = order(levels(df$dim))
+df$dim = factor(df$dim, levels = sorted_dims)
+df$fid = as.factor(df$fid)
+sorted_fids = order(levels(df$fid))
+df$fid = factor(df$fid, levels = sorted_fids)
+df = df %>% arrange(dim, fid)
 
-base_plot <- ggplot(df, aes(x = Model1, y = SBS, color = FID)) + 
+# print performance data
+print(paste0("relERT model: ", mean(df$relERT)))
+print(paste0("relERT model with FC: ", mean(df$relERT_FC)))
+print(paste0("relERT SBS (HCMA): ", mean(df$HCMA)))
+
+# TODO: different plots per dimension
+ggplot(df, aes(x = relERT, y = HCMA, color = fid)) + 
   geom_point() + 
   scale_x_log10() + 
   scale_y_log10() + 
   geom_abline(slope = 1, intercept = 0, color = "grey80", linetype = "dashed") + 
   theme_bw() + 
   theme(legend.position = "bottom") 
-base_plot
+
+ggplot(df, aes(x = relERT_FC, y = HCMA, color = fid)) + 
+  geom_point() + 
+  scale_x_log10() + 
+  scale_y_log10() + 
+  geom_abline(slope = 1, intercept = 0, color = "grey80", linetype = "dashed") + 
+  theme_bw() + 
+  theme(legend.position = "bottom") 
 ```
