@@ -149,6 +149,9 @@ relERT_fc = relERT_fc %>% rename_with(~ gsub(".1", "_FC", .x, fixed = TRUE))
 ```{r Preprocessing}
 set.seed(42)
 
+# remove (almost) constant features, because the case problems when applying feature selection for ksvm
+features = features %>% select(dim, fid, where(~ n_distinct(.) > 6))
+
 # Store column names for training
 feature_names = colnames(features[3:ncol(features)])
 solver_names = colnames(relERT[3:ncol(relERT)])
@@ -180,41 +183,34 @@ feature_selection = function(learner, task, strategy){
     return(feature_names)
   }
   rdesc = makeResampleDesc("LOO")
-  if(strategy == "sffs"){
-    control = makeFeatSelControlSequential(method = "sffs")
-  }
-  else if(strategy == "sfbs"){
-    control = makeFeatSelControlSequential(method = "sfbs")
-  }
-  else if(strategy == "ga"){
-    control = makeFeatSelControlGA(lambda = 5, maxit = 100)
-  }
-  else if(strategy == "ga2"){
-    control = makeFeatSelControlGA(lambda = 50, maxit = 100)
-  }
-  sf = selectFeatures(learner, task, rdesc, control = control)
+  control = switch(
+    strategy,
+    "sffs" = makeFeatSelControlSequential(method = "sffs"),
+    "sfbs" = makeFeatSelControlSequential(method = "sfbs"),
+    "ga" = makeFeatSelControlGA(lambda = 5, maxit = 100),
+    "ga2" = makeFeatSelControlGA(lambda = 50, maxit = 100)
+  )
+  sf = selectFeatures(learner, task, rdesc, control = control, show.info = TRUE)
   return(sf[["x.bit.names"]])
 }
 ```
 
 ```{r Classification model validation}
-createLearner = function(data_train, learner){
-  learnerAlgo = makeLearner(learner)
-  if(learner == "classif.ksvm"){
-    sigest_values = sigest(Best~., data = data_train)
-    sigma = sigest_values[2] # use mean sigest value
-  }
-}
-
-model_validation_classif = function(data, learner, selected_features, sigma = NA){
-  set.seed(42)
-  learnerAlgo = makeLearner(learner)
-  if(learner == "classif.ksvm"){
+createLearnerClassif = function(data, learnerName, selected_features){
+  learnerAlgo = makeLearner(learnerName)
+  if(learnerName == "classif.ksvm"){
     data_train = data %>% select(all_of(selected_features), "Best")
     sigest_values = sigest(Best~., data = data_train)
     sigma = sigest_values[2] # use mean sigest value
+    learnerAlgo = setHyperPars(learnerAlgo, sigma = sigma)
   }
-  
+  return(learnerAlgo)
+}
+
+model_validation_classif = function(data, learnerName, selected_features, sigma = NA){
+  set.seed(42)
+  learnerAlgo = createLearner(data, learnerName, selected_features)
+
   # leave-one-(function)-out cross-validation
   relERTPredictions = tibble()
   for(index in 1:nrow(data)){
@@ -241,24 +237,29 @@ model_validation_classif = function(data, learner, selected_features, sigma = NA
 learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
 predictions_classif = list()
 selectedFeatures_classif = list()
-for(learner in learners){
+
+for(learnerName in learners){
   for(strategy in strategies){
-    name = paste(learner, "_", strategy)
+    name = paste(learnerName, "_", strategy)
     
     # feature selection
     data_train = data %>% select(all_of(feature_names), "Best")
-    learner = makeLearner(learner)
+    learner = createLearnerClassif(data, learnerName, feature_names)
     task = makeClassifTask(data = data_train, target = "Best")
     sel_features = feature_selection(learner, task, strategy)
     selectedFeatures_classif[[name]] = sel_features
     
     # model validation
-    predicted_relERT = model_validation_classif(data, learner, sel_features)
+    predicted_relERT = model_validation_classif(data, learnerName, sel_features)
     predictions_classif[[name]] = predicted_relERT
+    
+    print(paste0(learnerName, "_", strategy, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
   }
 }
 
-#print(paste0(learner, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
+# save data
+saveRDS(predictions_classif, file="predictions_classif.RData")
+saveRDS(selectedFeatures_classif, file="selectedFeatures_classif.RData")
 ```
 
 ```{r Regression model validation}
@@ -299,14 +300,33 @@ model_validation_regr = function(data, learner, selected_features){
   relERTPredictions
 }
 
-sel_features = feature_names
-#sel_features = c("ela_distr.skewness", "ela_distr.kurtosis", "ela_distr.number_of_peaks", "ela_level.lda_mda_10", "ic.h.max", "ic.eps.s", "cm_angle.dist_ctr2worst.mean", "basic.objective_min")
-
+# evaluate regression models
 learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
-for(learner in learners){
-  predicted_relERT = model_validation_regr(data, learner, sel_features)
-  print(paste0(learner, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
+predictions_regr = list()
+selectedFeatures_regr = list()
+
+for(learnerName in learners){
+  for(strategy in strategies){
+    name = paste(learnerName, "_", strategy)
+    
+    # feature selection
+    data_train = data %>% select(all_of(feature_names), "BSqi")
+    learner = makeLearner(learnerName)
+    task = makeRegrTask(data = data_train, target = "BSqi")
+    sel_features = feature_selection(learner, task, strategy)
+    selectedFeatures_regr[[name]] = sel_features
+    
+    # model validation
+    predicted_relERT = model_validation_regr(data, learnerName, sel_features)
+    predictions_regr[[name]] = predicted_relERT
+    
+    print(paste0(learnerName, "_", strategy, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
+  }
 }
+
+# save data
+saveRDS(predictions_regr, file="predictions_regr.RData")
+saveRDS(selectedFeatures_regr, file="selectedFeatures_regr.RData")
 ```
 
 ```{r Paired regression model validation}
@@ -358,17 +378,73 @@ model_validation_pair_regr = function(data, learner, selected_features){
   relERTPredictions
 }
 
-sel_features = feature_names
-
+# evaluate pairwise regression models
 learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
-for(learner in learners){
-  predicted_relERT = model_validation_pair_regr(data, learner, sel_features)
-  print(paste0(learner, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
+predictions_pair_regr = list()
+selectedFeatures_pair_regr = list()
+for(learnerName in learners){
+  for(strategy in strategies){
+    name = paste(learnerName, "_", strategy)
+    
+    # feature selection
+    data_train = data %>% 
+          select(all_of(feature_names), "BSqi", "BSrr") %>%
+          mutate(solverDiff := "BSqi" - "BSrr") %>%
+          select(-"BSqi", -"BSrr")
+    learner = makeLearner(learnerName)
+    task = makeRegrTask(data = data_train, target = solverDiff)
+    sel_features = feature_selection(learner, task, strategy)
+    predictions_pair_regr[[name]] = sel_features
+    
+    # model validation
+    predicted_relERT = model_validation_pair_regr(data, learnerName, sel_features)
+    predictions_pair_regr[[name]] = predicted_relERT
+    
+    print(paste0(learnerName, "_", strategy, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
+  }
 }
+
+# save data
+saveRDS(predictions_pair_regr, file="predictions_pair_regr.RData")
+saveRDS(selectedFeatures_pair_regr, file="selectedFeatures_pair_regr.RData")
 ```
 
 ```{r SBS calculation}
 meanRelERT = colMeans(relERT[solver_names])
 SBSrelERT = min(meanRElERT)
 SBS = names(meanRelERT)[meanRelERT == SBSrelERT]
+```
+
+```{r Plot classification model results}
+predictions_classif = readRDS("predictions_classif.RData")
+selectedFeatures_classif = readRDS("selectedFeatures_classif.RData")
+
+# Create the base plot
+ERT_Model1 = predictions_classif$`classif.rpart _ sffs` %>% filter(dim == 3)
+ERT_SBS = data %>% filter(dim == 3)
+
+df <- data.frame(
+  Model1 = ERT_Model1$relERT,
+  SBS = ERT_SBS$HCMA,
+  FID = as.factor(ERT_Model1$fid)
+)
+sorted_fids = order(levels(df$FID))
+df$FID <- factor(df$FID, levels = sorted_fids)
+
+base_plot <- ggplot(df, aes(x = Model1, y = SBS, color = FID)) + 
+  geom_point() + 
+  scale_x_log10() + 
+  scale_y_log10() + 
+  geom_abline(slope = 1, intercept = 0, color = "grey80", linetype = "dashed") + 
+  theme_bw() + 
+  theme(legend.position = "bottom") 
+
+# Create a facet grid of plots
+final_plot <- base_plot + 
+  facet_grid(Model ~ Condition) +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(title = "BBOB-Group"), shape = guide_legend(title = "Function ID"))
+
+# Display the plot
+print(final_plot)
 ```
