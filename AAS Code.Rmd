@@ -173,25 +173,46 @@ data = merge(features, relERT, by=c("dim","fid")) %>% merge(relERT_fc, by=c("dim
 ```
 
 ```{r Feature selection}
-data_train = data %>% select(all_of(feature_names), "Best")
-learner = "classif.rpart"
-classif.lrn = makeLearner(learner)
-classif.task = makeClassifTask(data = data_train, target = "Best")
-control = makeFeatSelControlSequential(method = "sffs")
-rdesc = makeResampleDesc("LOO")
-f = selectFeatures(classif.lrn, classif.task, rdesc, control = control)
-analyzeFeatSelResult(f)
+strategies = c("all", "sffs", "sfbs", "ga", "ga2")
+feature_selection = function(learner, task, strategy){
+  set.seed(42)
+  if(strategy == "all"){
+    return(feature_names)
+  }
+  rdesc = makeResampleDesc("LOO")
+  if(strategy == "sffs"){
+    control = makeFeatSelControlSequential(method = "sffs")
+  }
+  else if(strategy == "sfbs"){
+    control = makeFeatSelControlSequential(method = "sfbs")
+  }
+  else if(strategy == "ga"){
+    control = makeFeatSelControlGA(lambda = 5, maxit = 100)
+  }
+  else if(strategy == "ga2"){
+    control = makeFeatSelControlGA(lambda = 50, maxit = 100)
+  }
+  sf = selectFeatures(learner, task, rdesc, control = control)
+  return(sf[["x.bit.names"]])
+}
 ```
 
 ```{r Classification model validation}
-model_validation_classif = function(data, learner, selected_features){
+createLearner = function(data_train, learner){
+  learnerAlgo = makeLearner(learner)
+  if(learner == "classif.ksvm"){
+    sigest_values = sigest(Best~., data = data_train)
+    sigma = sigest_values[2] # use mean sigest value
+  }
+}
+
+model_validation_classif = function(data, learner, selected_features, sigma = NA){
   set.seed(42)
   learnerAlgo = makeLearner(learner)
   if(learner == "classif.ksvm"){
     data_train = data %>% select(all_of(selected_features), "Best")
     sigest_values = sigest(Best~., data = data_train)
     sigma = sigest_values[2] # use mean sigest value
-    learnerAlgo = setHyperPars(learnerAlgo, sigma = sigma)
   }
   
   # leave-one-(function)-out cross-validation
@@ -216,15 +237,28 @@ model_validation_classif = function(data, learner, selected_features){
   relERTPredictions
 }
 
-sel_features = feature_names
-#sel_features = c("ela_distr.skewness", "ela_distr.kurtosis", "ela_distr.number_of_peaks", "ela_level.lda_mda_10", "ic.h.max", "ic.eps.s", "cm_angle.dist_ctr2worst.mean", "basic.objective_min")
-
-# calculate mean relERT
+# evaluate classifiers
 learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
+predictions_classif = list()
+selectedFeatures_classif = list()
 for(learner in learners){
-  predicted_relERT = model_validation_classif(data, learner, sel_features)
-  print(paste0(learner, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
+  for(strategy in strategies){
+    name = paste(learner, "_", strategy)
+    
+    # feature selection
+    data_train = data %>% select(all_of(feature_names), "Best")
+    learner = makeLearner(learner)
+    task = makeClassifTask(data = data_train, target = "Best")
+    sel_features = feature_selection(learner, task, strategy)
+    selectedFeatures_classif[[name]] = sel_features
+    
+    # model validation
+    predicted_relERT = model_validation_classif(data, learner, sel_features)
+    predictions_classif[[name]] = predicted_relERT
+  }
 }
+
+#print(paste0(learner, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
 ```
 
 ```{r Regression model validation}
