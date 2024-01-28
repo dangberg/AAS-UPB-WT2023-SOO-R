@@ -139,8 +139,11 @@ write.csv(relERT_fc,"relERT_featureCosts.csv")
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 features = read_csv("features.csv")
 relERT = read_csv("relERT.csv")
+relERT_fc = read_csv("relERT_featureCosts.csv")
 features = features[-1]
 relERT = relERT[-1]
+relERT_fc = relERT_fc[-1]
+relERT_fc = relERT_fc %>% rename_with(~ gsub(".1", "_FC", .x, fixed = TRUE))
 ```
 
 ```{r Preprocessing}
@@ -166,7 +169,7 @@ relERT$Best = apply(relERT[3:ncol(relERT)], 1, function(x) {
 relERT$Best = as.factor(relERT$Best)
 
 # merge both data sets
-data = merge(features,relERT,by=c("dim","fid")) %>% arrange(dim, fid)
+data = merge(features, relERT, by=c("dim","fid")) %>% merge(relERT_fc, by=c("dim","fid")) %>% arrange(dim, fid)
 ```
 
 ```{r Feature selection}
@@ -182,6 +185,7 @@ analyzeFeatSelResult(f)
 
 ```{r Classification model validation}
 model_validation_classif = function(data, learner, selected_features){
+  set.seed(42)
   learnerAlgo = makeLearner(learner)
   if(learner == "classif.ksvm"){
     data_train = data %>% select(all_of(selected_features), "Best")
@@ -202,40 +206,37 @@ model_validation_classif = function(data, learner, selected_features){
     prediction = predict(model, newdata = data_val %>% select(all_of(selected_features)))
     prediction = as.data.frame(prediction)
     predictedAlgo = as.character(prediction[1, 1])
-    predictionRelERT = data_val[[predictedAlgo]] # TODO: also for including costs
-    row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT)
+    predictionRelERT = data_val[[predictedAlgo]]
+    predictionRelERTFC = data_val[[paste0(predictedAlgo, "_FC")]]
+    row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT, relERT_FC = predictionRelERTFC)
     relERTPredictions = bind_rows(relERTPredictions, row)
   }
-  
+  relERTPredictions$relERT = as.numeric(relERTPredictions$relERT)
+  relERTPredictions$relERT_FC = as.numeric(relERTPredictions$relERT_FC)
   relERTPredictions
 }
 
-#sel_features = feature_names
-sel_features = c("ela_distr.skewness", "ela_distr.kurtosis", "ela_distr.number_of_peaks", "ela_level.lda_mda_10", "ic.h.max", "ic.eps.s", "cm_angle.dist_ctr2worst.mean", "basic.objective_min")
-
-set.seed(42)
-predicted_relERT = model_validation_classif(data, "classif.ksvm", sel_features)
+sel_features = feature_names
+#sel_features = c("ela_distr.skewness", "ela_distr.kurtosis", "ela_distr.number_of_peaks", "ela_level.lda_mda_10", "ic.h.max", "ic.eps.s", "cm_angle.dist_ctr2worst.mean", "basic.objective_min")
 
 # calculate mean relERT
-predicted_relERT$relERT = as.numeric(predicted_relERT$relERT)
-print(mean(predicted_relERT$relERT))
-
-#learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
-#for(learner in learners){
-#  predicted_relERT = model_validation_classif(data, learner, feature_names)
-#  print(paste0(learner, " : ", predicted_relERT))
-#}
+learners = c("classif.rpart", "classif.ksvm", "classif.randomForest", "classif.xgboost")
+for(learner in learners){
+  predicted_relERT = model_validation_classif(data, learner, sel_features)
+  print(paste0(learner, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
+}
 ```
 
 ```{r Regression model validation}
 model_validation_regr = function(data, learner, selected_features){
   # leave-one-(function)-out cross-validation
+  set.seed(42)
   relERTPredictions = c()
+  solver_names = solver_names
   
   cores = detectCores()
   cl = makeCluster(cores[1]-1)
   registerDoParallel(cl)
-  solver_names = solver_names
   relERTPredictions = foreach(index=1:nrow(data), .combine = bind_rows, .packages = c("tidyverse", "mlr")) %dopar% {
     data_val = data[index,]
     solverRelERTPred = structure(numeric(0), names=character(0))
@@ -252,38 +253,39 @@ model_validation_regr = function(data, learner, selected_features){
     }
 
     predictedAlgo = names(solverRelERTPred[solverRelERTPred == min(solverRelERTPred)])
-    predictionRelERT = data_val[[predictedAlgo]] # TODO: also for including costs
-    row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT)
+    predictionRelERT = data_val[[predictedAlgo]]
+    predictionRelERTFC = data_val[[paste0(predictedAlgo, "_FC")]]
+    row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT, relERT_FC = predictionRelERTFC)
     row
   }
   
   stopCluster(cl)
+  relERTPredictions$relERT = as.numeric(relERTPredictions$relERT)
+  relERTPredictions$relERT_FC = as.numeric(relERTPredictions$relERT_FC)
   relERTPredictions
 }
 
-#sel_features = feature_names
-sel_features = c("ela_distr.skewness", "ela_distr.kurtosis", "ela_distr.number_of_peaks", "ela_level.lda_mda_10", "ic.h.max", "ic.eps.s", "cm_angle.dist_ctr2worst.mean", "basic.objective_min")
+sel_features = feature_names
+#sel_features = c("ela_distr.skewness", "ela_distr.kurtosis", "ela_distr.number_of_peaks", "ela_level.lda_mda_10", "ic.h.max", "ic.eps.s", "cm_angle.dist_ctr2worst.mean", "basic.objective_min")
 
-set.seed(42)
-predicted_relERT = model_validation_regr(data, "regr.randomForest", sel_features)
-  # calculate mean relERT
-predicted_relERT$relERT = as.numeric(predicted_relERT$relERT)
-print(mean(predicted_relERT$relERT))
-
-filtered_pred = predicted_relERT %>% filter(dim != 3)
-print(mean(filtered_pred$relERT))
-#learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
-#for(learner in learners){
-#  predicted_relERT = model_validation_regr(data, learner, feature_names)
-#  print(paste0(learner, " : ", predicted_relERT))
-#}
+learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
+for(learner in learners){
+  predicted_relERT = model_validation_regr(data, learner, sel_features)
+  print(paste0(learner, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
+}
 ```
 
 ```{r Paired regression model validation}
-model_validation_pair_regr = function(data, learner){
+model_validation_pair_regr = function(data, learner, selected_features){
   # leave-one-(function)-out cross-validation
+  set.seed(42)
   relERTPredictions = c()
-  for(index in 1:nrow(data)){
+  solver_names = solver_names
+  
+  cores = detectCores()
+  cl = makeCluster(cores[1]-1)
+  registerDoParallel(cl)
+  relERTPredictions = foreach(index=1:nrow(data), .combine = bind_rows, .packages = c("tidyverse", "mlr")) %dopar% {
     data_val = data[index,]
     solverDiffs = matrix(0, length(solver_names), length(solver_names))
     rownames(solverDiffs) = solver_names
@@ -293,14 +295,14 @@ model_validation_pair_regr = function(data, learner){
         solverAName = solver_names[solverA]
         solverBName = solver_names[solverB]
         data_train = data[-index, ] %>% 
-          select(all_of(feature_names), all_of(solverAName), all_of(solverBName)) %>%
+          select(all_of(selected_features), all_of(solverAName), all_of(solverBName)) %>%
           mutate(solverDiff := .data[[solverAName]] - .data[[solverBName]]) %>%
           select(-solverAName, -solverBName)
         learnerAlgo = makeLearner(learner)
         task = makeRegrTask(data = data_train, target = "solverDiff")
         model = train(learnerAlgo, task)
         
-        prediction = predict(model, newdata = data_val %>% select(all_of(feature_names)))
+        prediction = predict(model, newdata = data_val %>% select(all_of(selected_features)))
         prediction = as.data.frame(prediction)
         predictedDiff = prediction[1, 1]
         solverDiffs[solverA, solverB] = predictedDiff
@@ -310,19 +312,24 @@ model_validation_pair_regr = function(data, learner){
     
     sumDiffs = rowSums(solverDiffs)
     predictedAlgo = names(sumDiffs[sumDiffs == min(sumDiffs)])
-    predictionRelERT = data_val[[predictedAlgo]] # TODO: also for including costs
-    relERTPredictions = c(relERTPredictions, predictionRelERT)
+    predictionRelERT = data_val[[predictedAlgo]]
+    predictionRelERTFC = data_val[[paste0(predictedAlgo, "_FC")]]
+    row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT, relERT_FC = predictionRelERTFC)
+    row
   }
   
-  # calculate mean relERT
-  mean(relERTPredictions)
+  stopCluster(cl)
+  relERTPredictions$relERT = as.numeric(relERTPredictions$relERT)
+  relERTPredictions$relERT_FC = as.numeric(relERTPredictions$relERT_FC)
+  relERTPredictions
 }
+
+sel_features = feature_names
 
 learners = c("regr.rpart", "regr.ksvm", "regr.randomForest", "regr.xgboost", "regr.earth")
 for(learner in learners){
-  predicted_relERT = model_validation_pair_regr(data, learner)
-  print(paste0(learner, " : ", predicted_relERT))
-  break
+  predicted_relERT = model_validation_pair_regr(data, learner, sel_features)
+  print(paste0(learner, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
 }
 ```
 
