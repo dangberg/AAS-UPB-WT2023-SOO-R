@@ -398,7 +398,7 @@ for(learnerName in learners){
     learner = makeLearner(learnerName)
     task = makeRegrTask(data = data_train, target = "solverDiff")
     sel_features = feature_selection(learner, task, strategy)
-    predictions_pair_regr[[name]] = sel_features
+    selectedFeatures_pair_regr[[name]] = sel_features
     
     # model validation
     predicted_relERT = model_validation_pair_regr(data, learnerName, sel_features)
@@ -422,8 +422,8 @@ SBS = names(meanRelERT)[meanRelERT == SBSrelERT]
 ```{r Plot model results}
 # load data for plotting
 relERT = read_csv("relERT.csv")
-predictions_classif = readRDS("predictions_classif.RData") # TODO: For all types of models
-selectedFeatures_classif = readRDS("selectedFeatures_classif.RData") # TODO: For all types of models
+predictions_classif = readRDS("predictions_pair_regr.RData") # TODO: For all types of models
+selectedFeatures_classif = readRDS("selectedFeatures_pair_regr.RData") # TODO: For all types of models
 
 # select data for plotting
 model = predictions_classif$`classif.rpart _ sffs` # TODO: For every model
