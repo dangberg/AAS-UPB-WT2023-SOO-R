@@ -294,7 +294,7 @@ model_validation_regr = function(data, learner, selected_features){
         solverRelERTPred[solver] = predictedRelERT
     }
 
-    predictedAlgo = names(solverRelERTPred[solverRelERTPred == min(solverRelERTPred)])
+    predictedAlgo = names(solverRelERTPred[solverRelERTPred == min(solverRelERTPred)])[1]
     predictionRelERT = data_val[[predictedAlgo]]
     predictionRelERTFC = data_val[[paste0(predictedAlgo, "_FC")]]
     row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT, relERT_FC = predictionRelERTFC)
@@ -375,7 +375,7 @@ model_validation_pair_regr = function(data, learner, selected_features){
     }
     
     sumDiffs = rowSums(solverDiffs)
-    predictedAlgo = names(sumDiffs[sumDiffs == min(sumDiffs)])
+    predictedAlgo = names(sumDiffs[sumDiffs == min(sumDiffs)])[1]
     predictionRelERT = data_val[[predictedAlgo]]
     predictionRelERTFC = data_val[[paste0(predictedAlgo, "_FC")]]
     row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT, relERT_FC = predictionRelERTFC)
