@@ -422,12 +422,21 @@ SBS = names(meanRelERT)[meanRelERT == SBSrelERT]
 ```{r Plot model results}
 # load data for plotting
 relERT = read_csv("relERT.csv")
-predictions_classif = readRDS("predictions_pair_regr.RData") # TODO: For all types of models
 selectedFeatures_classif = readRDS("selectedFeatures_pair_regr.RData") # TODO: For all types of models
 
 # select data for plotting
 model = predictions_classif$`classif.rpart _ sffs` # TODO: For every model
 sbs = relERT %>% select(fid, dim, HCMA)
+
+for (file in c("predictions_classif.RData","predictions_regr.RData", "predictions_pair_regr.RData")){
+  predictions = readRDS(file)
+
+  for (name in names(predictions)){
+    model = predictions[[name]]
+    print(paste0("relERT model ", name ,": ", mean(model$relERT)))
+    print(paste0("relERT model ", name, " with FC:", mean(model$relERT_FC)))
+  }
+}
 
 # create factors for plotting
 df = merge(model, sbs, by=c("dim","fid"))
