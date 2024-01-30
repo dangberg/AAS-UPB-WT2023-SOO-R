@@ -459,7 +459,7 @@ relErtPlot = function(model,type){
   df = df %>% mutate(diff = relERT-HCMA)
   print(df)
   p3 = ggplot(df, aes(x=fid, y=diff, fill = dim)) +
-    geom_col(position = "dodge", stat = "identity") +
+    geom_col(position = "dodge") +
     scale_y_continuous(trans = pseudolog10_trans, breaks = c(-1000, -100, -10, 0, 10, 100, 1000, 10000)) +
     ggtitle(type)
   
@@ -473,11 +473,11 @@ relErtPlot = function(model,type){
 for (file in c("predictions_classif.RData","predictions_regr.RData", "predictions_pair_regr.RData")){
   predictions = readRDS(file)
 
-  for (name in names(predictions)){
-    model = predictions[[name]]
-    print(paste0("relERT model ", name ,": ", mean(model$relERT)))
-    print(paste0("relERT model ", name, " with FC:", mean(model$relERT_FC)))
-  }
+  #for (name in names(predictions)){
+  #  model = predictions[[name]]
+  #  print(paste0("relERT model ", name ,": ", mean(model$relERT)))
+  #  print(paste0("relERT model ", name, " with FC:", mean(model$relERT_FC)))
+  #}
   bestModelName = names(predictions)[which.min(sapply(predictions, function(x) mean(x$relERT)))]
   bestModel = predictions[[bestModelName]]
   print(paste0("best model: ", bestModelName))
