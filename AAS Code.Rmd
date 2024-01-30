@@ -26,6 +26,7 @@ library(kernlab)
 library(randomForest)
 library(xgboost)
 library(earth)
+library(ggallin)
 ```
 
 ```{r Feature Calculation}
@@ -422,21 +423,53 @@ saveRDS(predictions_pair_regr, file="predictions_pair_regr.RData")
 saveRDS(selectedFeatures_pair_regr, file="selectedFeatures_pair_regr.RData")
 ```
 
-```{r SBS calculation}
-meanRelERT = colMeans(relERT[solver_names])
-SBSrelERT = min(meanRElERT)
-SBS = names(meanRelERT)[meanRelERT == SBSrelERT]
-```
-
 ```{r Plot model results}
-# load data for plotting
-relERT = read_csv("relERT.csv")
-selectedFeatures_classif = readRDS("selectedFeatures_pair_regr.RData") # TODO: For all types of models
+relERT = read_csv("relERT.csv")[-1]
+ert = read_csv("ert_data.csv")
+solver_names = colnames(relERT[3:ncol(relERT)])
+meanRelERT = colMeans(relERT[solver_names])
+SBSrelERT = min(meanRelERT)
+SBS = names(meanRelERT)[meanRelERT == SBSrelERT]
+SBSData = relERT %>% select(dim, fid, all_of(SBS))
 
-# select data for plotting
-model = predictions_classif$`classif.rpart _ sffs` # TODO: For every model
-sbs = relERT %>% select(fid, dim, HCMA)
+relErtPlot = function(model,type){
+  df = merge(model, SBSData, by=c("dim","fid"))
+  df$dim = factor(df$dim, levels = c(2,3,5,10))
+  df$fid = factor(df$fid, levels = 1:24)
+  df = df %>% arrange(dim, fid)
+  
+  p1 = ggplot(df, aes(x = relERT, y = HCMA, color = fid)) + 
+    geom_point() + 
+    scale_x_log10() + 
+    scale_y_log10() + 
+    geom_abline(slope = 1, intercept = 0, color = "grey80", linetype = "dashed") + 
+    theme_bw() + 
+    theme(legend.position = "bottom")  +
+    ggtitle(type)
 
+  p2 = ggplot(df, aes(x = relERT_FC, y = HCMA, color = fid)) + 
+    geom_point() + 
+    scale_x_log10() + 
+    scale_y_log10() + 
+    geom_abline(slope = 1, intercept = 0, color = "grey80", linetype = "dashed") + 
+    theme_bw() + 
+    theme(legend.position = "bottom") +
+    ggtitle(type)
+  
+  df = df %>% mutate(diff = relERT-HCMA)
+  print(df)
+  p3 = ggplot(df, aes(x=fid, y=diff, fill = dim)) +
+    geom_col(position = "dodge", stat = "identity") +
+    scale_y_continuous(trans = pseudolog10_trans, breaks = c(-1000, -100, -10, 0, 10, 100, 1000, 10000)) +
+    ggtitle(type)
+  
+  print(p1)
+  print(p2)
+  print(p3)
+}
+
+
+# print relERTs
 for (file in c("predictions_classif.RData","predictions_regr.RData", "predictions_pair_regr.RData")){
   predictions = readRDS(file)
 
@@ -445,65 +478,12 @@ for (file in c("predictions_classif.RData","predictions_regr.RData", "prediction
     print(paste0("relERT model ", name ,": ", mean(model$relERT)))
     print(paste0("relERT model ", name, " with FC:", mean(model$relERT_FC)))
   }
+  bestModelName = names(predictions)[which.min(sapply(predictions, function(x) mean(x$relERT)))]
+  bestModel = predictions[[bestModelName]]
+  print(paste0("best model: ", bestModelName))
+  print(paste0("best model relERT: ", mean(bestModel$relERT)))
+  print(paste0("best model relERT with FC: ", mean(bestModel$relERT_FC)))
+  
+  relErtPlot(bestModel, file)
 }
-
-# create factors for plotting
-df = merge(model, sbs, by=c("dim","fid"))
-df$dim = as.factor(df$dim)
-sorted_dims = order(levels(df$dim))
-df$dim = factor(df$dim, levels = sorted_dims)
-df$fid = as.factor(df$fid)
-sorted_fids = order(levels(df$fid))
-df$fid = factor(df$fid, levels = sorted_fids)
-df = df %>% arrange(dim, fid)
-
-# print performance data
-print(paste0("relERT model: ", mean(df$relERT)))
-print(paste0("relERT model with FC: ", mean(df$relERT_FC)))
-print(paste0("relERT SBS (HCMA): ", mean(df$HCMA)))
-
-# TODO: different plots per dimension
-ggplot(df, aes(x = relERT, y = HCMA, color = fid)) + 
-  geom_point() + 
-  scale_x_log10() + 
-  scale_y_log10() + 
-  geom_abline(slope = 1, intercept = 0, color = "grey80", linetype = "dashed") + 
-  theme_bw() + 
-  theme(legend.position = "bottom") 
-
-ggplot(df, aes(x = relERT_FC, y = HCMA, color = fid)) + 
-  geom_point() + 
-  scale_x_log10() + 
-  scale_y_log10() + 
-  geom_abline(slope = 1, intercept = 0, color = "grey80", linetype = "dashed") + 
-  theme_bw() + 
-  theme(legend.position = "bottom") 
 ```
-
-```{r}
-a = aes(x=as.numeric(fid), y=relERT)
-b = aes(x=as.numeric(fid), y=HCMA)
-
-df %>% filter(dim == 2) %>%
-ggplot() +
-  scale_x_continuous(limits = c(1,24), expand = c(0, 0.1)) +
-  scale_y_log10() +
-  geom_line(a, color = "red")+
-  geom_point(a)+
-  geom_line(b, color = "green")+
-  geom_point(b) + 
-  geom_ribbon(aes(x=as.numeric(fid), ymax=relERT, ymin=HCMA), fill="grey", alpha=.5)
-  
-```
-
-```{r}
-library(ggallin)
-test = df %>% filter(dim == 2) %>% mutate(diff = HCMA - relERT)
-
-ggplot(test, aes(x=fid, y=diff)) +
-  #scale_y_log10() +
-  geom_col() +
-  scale_y_continuous(trans = pseudolog10_trans)
-  
-```
-
