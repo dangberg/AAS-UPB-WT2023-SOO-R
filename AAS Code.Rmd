@@ -251,6 +251,9 @@ for(learnerName in learners){
     learner = createLearnerClassif(data, learnerName, feature_names)
     task = makeClassifTask(data = data_train, target = "Best")
     sel_features = feature_selection(learner, task, strategy)
+    if(length(sel_features) == 0){
+      next
+    }
     selectedFeatures_classif[[name]] = sel_features
     
     # model validation
@@ -318,6 +321,9 @@ for(learnerName in learners){
     learner = makeLearner(learnerName)
     task = makeRegrTask(data = data_train, target = "BSqi")
     sel_features = feature_selection(learner, task, strategy)
+    if(length(sel_features) == 0){
+      next
+    }
     selectedFeatures_regr[[name]] = sel_features
     
     # model validation
@@ -398,6 +404,9 @@ for(learnerName in learners){
     learner = makeLearner(learnerName)
     task = makeRegrTask(data = data_train, target = "solverDiff")
     sel_features = feature_selection(learner, task, strategy)
+    if(length(sel_features) == 0){
+      next
+    }
     selectedFeatures_pair_regr[[name]] = sel_features
     
     # model validation
