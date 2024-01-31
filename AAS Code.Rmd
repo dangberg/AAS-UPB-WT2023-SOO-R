@@ -362,6 +362,63 @@ saveRDS(predictions_regr, file="predictions_regr.RData")
 saveRDS(selectedFeatures_regr, file="selectedFeatures_regr.RData")
 ```
 
+```{r Train paired regression model}
+# configure training
+validationFunctionIndex = 1
+learnerName = "regr.randomForest"
+strategy = "all"
+
+# feature selection
+data_train = data %>% 
+          select(all_of(feature_names), "BSqi", "BSrr") %>%
+          mutate(solverDiff = .data$BSqi - .data$BSrr) %>%
+          select(-"BSqi", -"BSrr")
+learner = makeLearner(learnerName)
+task = makeRegrTask(data = data_train, target = "solverDiff")
+selected_features = feature_selection(learner, task, strategy)
+
+ # select validation data
+data_val = data[validationFunctionIndex,]
+
+# initialize matrix for the predicted relative differences of the solver pairs 
+solverDiffs = matrix(0, length(solver_names), length(solver_names))
+rownames(solverDiffs) = solver_names
+colnames(solverDiffs) = solver_names
+
+# train model for each solver pair
+set.seed(42)
+for(solverA in 1:(length(solver_names)-1)){
+  for(solverB in (solverA+1):length(solver_names)){
+    # select training data
+    solverAName = solver_names[solverA]
+    solverBName = solver_names[solverB]
+    data_train = data[-validationFunctionIndex, ] %>% 
+      select(all_of(selected_features), all_of(solverAName), all_of(solverBName)) %>%
+      mutate(solverDiff := .data[[solverAName]] - .data[[solverBName]]) %>%
+      select(-all_of(solverAName), -all_of(solverBName))
+    
+    # train model
+    learnerAlgo = makeLearner(learnerName)
+    task = makeRegrTask(data = data_train, target = "solverDiff")
+    model = train(learnerAlgo, task)
+    
+    # prediction for the one function that was left out
+    prediction = predict(model, newdata = data_val %>% select(all_of(selected_features)))
+    prediction = as.data.frame(prediction)
+    predictedDiff = prediction[1, 1]
+    solverDiffs[solverA, solverB] = predictedDiff
+    solverDiffs[solverB, solverA] = -predictedDiff
+  }
+}
+
+# choose best algorithm for the left-out function based on the predicted relERT differences
+sumDiffs = rowSums(solverDiffs)
+solverDiffs = cbind(solverDiffs, sumDiffs)
+predictedAlgo = names(sumDiffs[sumDiffs == min(sumDiffs)])[1]
+predictedAlgoRelERT = data_val[[predictedAlgo]]
+predictedAlgoRelERTFC = data_val[[paste0(predictedAlgo, "_FC")]]
+```
+
 ```{r Paired regression model validation}
 model_validation_pair_regr = function(data, learner, selected_features){
   # leave-one-(function)-out cross-validation
@@ -391,7 +448,7 @@ model_validation_pair_regr = function(data, learner, selected_features){
         data_train = data[-index, ] %>% 
           select(all_of(selected_features), all_of(solverAName), all_of(solverBName)) %>%
           mutate(solverDiff := .data[[solverAName]] - .data[[solverBName]]) %>%
-          select(-solverAName, -solverBName)
+          select(-all_of(solverAName), -all_of(solverBName))
         
         # train model
         learnerAlgo = makeLearner(learner)
