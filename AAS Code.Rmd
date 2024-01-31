@@ -1,7 +1,3 @@
----
-title: "R Notebook"
----
-
 ```{r Library import}
 # Feature calculation (+ implicit dependencies)
 library(smoof)
@@ -29,22 +25,24 @@ library(earth)
 library(ggallin)
 ```
 
+# Feature calculation
+
 ```{r Feature Calculation}
 set.seed(42)
 
-# function for scaling the function values according to prager23nullifying
+# function for scaling the function values according to prager23
 minMaxScaling = function(x){
   return ((x-min(x))/(max(x)-min(x)))
 }
 
-# detect cores for parallel execution
+# set up parallel execution
 cores = detectCores()
 cl = makeCluster(cores[1]-1)
 registerDoParallel(cl)
 
-# initialize parameters for feature calculation
+# initialize parameters for feature calculation and normalization
 feature_sets = c("ela_curv","ela_conv","ela_distr","ela_level","ela_local","ela_meta","basic","cm_angle","disp","ic","nbc","pca")
-features_normalization <- hash()
+features_normalization = hash()
 features_normalization[["ic"]] = c("ic.eps.s","ic.eps.max","ic.eps.ratio")
 features_normalization[["ela_meta"]] = c("ela_meta.lin_simple.intercept","ela_meta.lin_simple.coef.min","ela_meta.lin_simple.coef.max")
 features_normalization[["pca"]] = c("pca.expl_var.cov_init","pca.expl_var_PC1.cov_init")
@@ -54,21 +52,23 @@ iids = 1:5
 
 # calculate features for all dimensions X fids X iids 
 features= tibble()
-#Set domain of the sampled functions
+# set domain of the sampled functions
 control = list("init_sample.lower" = -5, "init_sample.upper" = 5, "init_sample.type" = "lhs")
 for (dim in dimensions) {
-  X <- createInitialSample(n.obs = 50 * dim, dim = dim, control = control)
+  X = createInitialSample(n.obs = 50 * dim, dim = dim, control = control)
     # parallel execution per fid
     results_df = foreach(fid=fids, .combine = bind_rows, .packages = c("tidyverse","flacco","smoof")) %dopar% {
       all_features_fid = tibble()
       for (iid in iids) {
           all_features_iid = c()
           for (feature_set in feature_sets){
+            # calculate feature set for a function instance
             fn = makeBBOBFunction(dimensions = dim, fid = fid, iid = iid)
             y = apply(X, 1, fn)
             feat.object = createFeatureObject(X = X, y = y, fun = fn, blocks = 3, force = TRUE)
             featureSet = calculateFeatureSet(feat.object, set = feature_set)
-            # separate calculation for features that need scaled function values as input (according to prager23nullifying)
+            
+            # separate calculation for features that need scaled function values as input (according to prager23)
             if(!is.null(features_normalization[[feature_set]])){
               yNorm = minMaxScaling(y)
               feat.objectNorm = createFeatureObject(X = X, y = yNorm, fun = fn, blocks = 3, force = TRUE)
@@ -89,13 +89,13 @@ stopCluster(cl)
 ```
 
 ```{r Feature mean calculation & filtering}
-# calculate mean per fid
+# calculate mean feature values per fid
 features = features %>% group_by(dim, fid) %>% summarise_all(mean) %>% select(-iid) %>% ungroup()
 
 # filter out not valid columns (containing INF, NA or constant values)
 features[sapply(features, is.infinite)] = NA
-features <- features[,colSums(is.na(features)) == 0]
-features <- features[, sapply(features, function(v) var(v, na.rm=TRUE)!=0)]
+features = features[,colSums(is.na(features)) == 0]
+features = features[, sapply(features, function(v) var(v, na.rm=TRUE)!=0)]
 ```
 
 ```{r Feature export}
@@ -103,17 +103,19 @@ setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 write.csv(features,"features.csv")
 ```
 
+# relERT conversion
+
 ```{r relERT calculations}
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 ert_data = read_csv("ert_data.csv")
 # remove repetition column
 ert_data = ert_data[-3]
-# rename columns so that they are usable with mlr
+# rename columns so that they are compatible with mlr library
 names(ert_data)[names(ert_data) == "CMA-CSA"] = "CMA_CSA"
 names(ert_data)[names(ert_data) == "SMAC-BBOB"] = "SMAC_BBOB"
 
-# scale ERT by min ERT for the function
+# scale ERT by min ERT for each function
 scaleERT = function(x){
   return (x / min(x))
 }
@@ -122,7 +124,7 @@ df_normalized = t(apply(ert_data[-c(1:2)], 1, scaleERT))
 PAR10_score = 10 * max(df_normalized[is.finite(df_normalized)])
 df_normalized[!is.finite(df_normalized)] = PAR10_score
 
-#  save data
+#  save relERT
 relERT = cbind(ert_data[1:2], df_normalized)
 write.csv(relERT,"relERT.csv")
 
@@ -132,11 +134,14 @@ df_normalized_fc = t(apply(ert_data_fc[-c(1:2)], 1, scaleERT))
 df_normalized_fc = df_normalized_fc[,-c(1:12)]
 df_normalized_fc[!is.finite(df_normalized_fc)] = PAR10_score
 
+#  save relERT with feature costs
 relERT_fc = cbind(ert_data[1:2], as_tibble(df_normalized_fc))
 write.csv(relERT_fc,"relERT_featureCosts.csv")
 ```
 
-```{r Read data}
+# Model training including feature selection
+
+```{r Read data for model training}
 # Read pre calculated data
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 features = read_csv("features.csv")
@@ -149,22 +154,21 @@ relERT_fc = relERT_fc %>% rename_with(~ gsub(".1", "_FC", .x, fixed = TRUE))
 ```
 
 ```{r Preprocessing}
-set.seed(42)
-
-# remove (almost) constant features, because the case problems when applying feature selection for ksvm
+# remove (almost) constant features, because the cause problems when applying feature selection for ksvm
 features = features %>% select(dim, fid, where(~ n_distinct(.) > 6))
 
-# Store column names for training
+# store column names for training
 feature_names = colnames(features[3:ncol(features)])
 solver_names = colnames(relERT[3:ncol(relERT)])
 
-# Scale all features
+# scale all features
 features[3:ncol(features)] = apply(features[3:ncol(features)], 2, scale)
 
 # calculate best solver per function (random selection for multiple best solvers)
+set.seed(42)
 relERT$Best = apply(relERT[3:ncol(relERT)], 1, function(x) {
-    minima <- which(x == min(x))
-    colNames <- colnames(relERT[3:ncol(relERT)])
+    minima = which(x == min(x))
+    colNames = colnames(relERT[3:ncol(relERT)])
     if (length(minima) > 1) {
         return(colNames[sample(minima, 1)])
     } else {
@@ -201,6 +205,7 @@ feature_selection = function(learner, task, strategy){
 ```
 
 ```{r Classification model validation}
+# function for creating the classification learner (inlcuding calculation sigma hyper parameter for ksvm)
 createLearnerClassif = function(data, learnerName, selected_features){
   learnerAlgo = makeLearner(learnerName)
   if(learnerName == "classif.ksvm"){
@@ -212,6 +217,7 @@ createLearnerClassif = function(data, learnerName, selected_features){
   return(learnerAlgo)
 }
 
+# execute model validation for a classification learner
 model_validation_classif = function(data, learnerName, selected_features, sigma = NA){
   set.seed(42)
   learnerAlgo = createLearnerClassif(data, learnerName, selected_features)
@@ -219,20 +225,26 @@ model_validation_classif = function(data, learnerName, selected_features, sigma 
   # leave-one-(function)-out cross-validation
   relERTPredictions = tibble()
   for(index in 1:nrow(data)){
+    # select data for training and validation
     data_train = data[-index, ] %>% select(all_of(selected_features), "Best")
     data_val = data[index,]
     
+    # train model
     task = makeClassifTask(data = data_train, target = "Best")
     model = train(learnerAlgo, task)
     
+    # prediction for the one function that was left out
     prediction = predict(model, newdata = data_val %>% select(all_of(selected_features)))
     prediction = as.data.frame(prediction)
     predictedAlgo = as.character(prediction[1, 1])
     predictionRelERT = data_val[[predictedAlgo]]
     predictionRelERTFC = data_val[[paste0(predictedAlgo, "_FC")]]
+    
+    # store prediction
     row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT, relERT_FC = predictionRelERTFC)
     relERTPredictions = bind_rows(relERTPredictions, row)
   }
+  
   relERTPredictions$relERT = as.numeric(relERTPredictions$relERT)
   relERTPredictions$relERT_FC = as.numeric(relERTPredictions$relERT_FC)
   relERTPredictions
@@ -261,11 +273,12 @@ for(learnerName in learners){
     predicted_relERT = model_validation_classif(data, learnerName, sel_features)
     predictions_classif[[name]] = predicted_relERT
     
+    # print performance data
     print(paste0(learnerName, "_", strategy, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
   }
 }
 
-# save data
+# save collected performance data
 saveRDS(predictions_classif, file="predictions_classif.RData")
 saveRDS(selectedFeatures_classif, file="selectedFeatures_classif.RData")
 ```
@@ -277,27 +290,35 @@ model_validation_regr = function(data, learner, selected_features){
   relERTPredictions = c()
   solver_names = solver_names
   
+  # parallel execution of LOO-CV
   cores = detectCores()
   cl = makeCluster(cores[1]-1)
   registerDoParallel(cl)
   relERTPredictions = foreach(index=1:nrow(data), .combine = bind_rows, .packages = c("tidyverse", "mlr")) %dopar% {
+    # select data for training and validation
     data_val = data[index,]
     solverRelERTPred = structure(numeric(0), names=character(0))
     for(solver in solver_names){
         data_train = data[-index, ] %>% select(all_of(selected_features), all_of(solver))
+        
+        # train model
         learnerAlgo = makeLearner(learner)
         task = makeRegrTask(data = data_train, target = solver)
         model = train(learnerAlgo, task)
         
+        # prediction for the one function that was left out
         prediction = predict(model, newdata = data_val %>% select(all_of(selected_features)))
         prediction = as.data.frame(prediction)
         predictedRelERT = prediction[1, 1]
         solverRelERTPred[solver] = predictedRelERT
     }
 
+    # choose best algorithm for the left-out function based on the predicted relERT values
     predictedAlgo = names(solverRelERTPred[solverRelERTPred == min(solverRelERTPred)])[1]
     predictionRelERT = data_val[[predictedAlgo]]
     predictionRelERTFC = data_val[[paste0(predictedAlgo, "_FC")]]
+    
+     # store prediction
     row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT, relERT_FC = predictionRelERTFC)
     row
   }
@@ -331,11 +352,12 @@ for(learnerName in learners){
     predicted_relERT = model_validation_regr(data, learnerName, sel_features)
     predictions_regr[[name]] = predicted_relERT
     
+    # print performance data
     print(paste0(learnerName, "_", strategy, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
   }
 }
 
-# save data
+# save collected performance data
 saveRDS(predictions_regr, file="predictions_regr.RData")
 saveRDS(selectedFeatures_regr, file="selectedFeatures_regr.RData")
 ```
@@ -347,26 +369,36 @@ model_validation_pair_regr = function(data, learner, selected_features){
   relERTPredictions = c()
   solver_names = solver_names
   
+  # parallel execution of LOO-CV
   cores = detectCores()
   cl = makeCluster(cores[1]-1)
   registerDoParallel(cl)
   relERTPredictions = foreach(index=1:nrow(data), .combine = bind_rows, .packages = c("tidyverse", "mlr")) %dopar% {
+    # select validation data
     data_val = data[index,]
+    
+    # initialize matrix for the predicted relative differences of the solver pairs 
     solverDiffs = matrix(0, length(solver_names), length(solver_names))
     rownames(solverDiffs) = solver_names
     colnames(solverDiffs) = solver_names
+    
+    # train model for each solver pair
     for(solverA in 1:(length(solver_names)-1)){
       for(solverB in (solverA+1):length(solver_names)){
+        # select training data
         solverAName = solver_names[solverA]
         solverBName = solver_names[solverB]
         data_train = data[-index, ] %>% 
           select(all_of(selected_features), all_of(solverAName), all_of(solverBName)) %>%
           mutate(solverDiff := .data[[solverAName]] - .data[[solverBName]]) %>%
           select(-solverAName, -solverBName)
+        
+        # train model
         learnerAlgo = makeLearner(learner)
         task = makeRegrTask(data = data_train, target = "solverDiff")
         model = train(learnerAlgo, task)
         
+        # prediction for the one function that was left out
         prediction = predict(model, newdata = data_val %>% select(all_of(selected_features)))
         prediction = as.data.frame(prediction)
         predictedDiff = prediction[1, 1]
@@ -375,10 +407,13 @@ model_validation_pair_regr = function(data, learner, selected_features){
       }
     }
     
+    # choose best algorithm for the left-out function based on the predicted relERT differences
     sumDiffs = rowSums(solverDiffs)
     predictedAlgo = names(sumDiffs[sumDiffs == min(sumDiffs)])[1]
     predictionRelERT = data_val[[predictedAlgo]]
     predictionRelERTFC = data_val[[paste0(predictedAlgo, "_FC")]]
+    
+    # store prediction
     row = c(dim = data_val$dim, fid = data_val$fid, algo = predictedAlgo, relERT = predictionRelERT, relERT_FC = predictionRelERTFC)
     row
   }
@@ -414,14 +449,17 @@ for(learnerName in learners){
     predicted_relERT = model_validation_pair_regr(data, learnerName, sel_features)
     predictions_pair_regr[[name]] = predicted_relERT
     
+    # print performance data
     print(paste0(learnerName, "_", strategy, " : ", "relERT (ex): ", mean(predicted_relERT$relERT), ", relERT (in): ", mean(predicted_relERT$relERT_FC)))
   }
 }
 
-# save data
+# save collected performance data
 saveRDS(predictions_pair_regr, file="predictions_pair_regr.RData")
 saveRDS(selectedFeatures_pair_regr, file="selectedFeatures_pair_regr.RData")
 ```
+
+# Aggregate results & plots
 
 ```{r Plot model results}
 relERT = read_csv("relERT.csv")[-1]
