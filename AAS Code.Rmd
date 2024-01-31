@@ -549,7 +549,7 @@ relErtPlot = function(model, type, title){
     ggtitle(title) +
     xlab(paste("relERT of the best", title, "solver")) +
     ylab("relERT of HCMA solver") +
-    labs(color= "Dimensions")
+    labs(color= "Function ID")
 
   # plot relERT including feature costs vs. SBS relERT
   p2 = ggplot(df, aes(x = relERT_FC, y = HCMA, color = fid)) + 
@@ -562,7 +562,7 @@ relErtPlot = function(model, type, title){
     ggtitle(title) +
     xlab("relERT including feature costs") +
     ylab("relERT of HCMA solver") +
-    labs(color= "Dimensions")
+    labs(color= "Function ID")
   
   # plot diference between relERT including feature costs and SBS relERT
   p3 = ggplot(df, aes(x=fid, y=diff, fill = dim)) +
