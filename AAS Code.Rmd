@@ -463,9 +463,16 @@ relErtPlot = function(model,type){
     scale_y_continuous(trans = pseudolog10_trans, breaks = c(-1000, -100, -10, 0, 10, 100, 1000, 10000)) +
     ggtitle(type)
   
+  p4 = ggplot(df, aes(x = fid, y = relERT_FC, fill = dim)) + 
+    geom_col(position = "dodge") + 
+    scale_y_continuous(trans='log10') +
+    theme(legend.position = "bottom") +
+    ggtitle(type)
+  
   print(p1)
   print(p2)
   print(p3)
+  print(p4)
 }
 
 
